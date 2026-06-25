@@ -17,6 +17,18 @@ import {
   Check,
   Mic,
   Droplet,
+  ShoppingBag,
+  Lock,
+  Unlock,
+  Coins,
+  History,
+  Coffee,
+  Compass,
+  Utensils,
+  PlusCircle,
+  Calendar,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import * as Tone from "tone";
 
@@ -38,8 +50,56 @@ const LEVEL_TITLES = [
 ];
 const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100];
 
+const STREAK_BONUSES = [
+  { day: 1, points: 5, label: "1d Streak Starter" },
+  { day: 2, points: 10, label: "2d Combo" },
+  { day: 3, points: 15, label: "3d Heat" },
+  { day: 7, points: 50, label: "7d Week Warrior" },
+  { day: 10, points: 100, label: "10d Unstoppable" },
+  { day: 30, points: 500, label: "30d Legend" },
+  { day: 100, points: 2000, label: "100d Grind Master" }
+];
+
+function computeStreakBonuses(days) {
+  const dates = Object.keys(days)
+    .filter((k) => days[k].perfectDay)
+    .sort();
+  if (dates.length === 0) return 0;
+  let totalBonus = 0;
+  let currentStreak = 0;
+  let prevDate = null;
+  for (const k of dates) {
+    const d = new Date(k + "T00:00:00");
+    if (prevDate) {
+      const diff = Math.round((d - prevDate) / 86400000);
+      if (diff === 1) {
+        currentStreak++;
+      } else {
+        currentStreak = 1;
+      }
+    } else {
+      currentStreak = 1;
+    }
+    const bonus = STREAK_BONUSES.find((b) => b.day === currentStreak);
+    if (bonus) {
+      totalBonus += bonus.points;
+    }
+    prevDate = d;
+  }
+  return totalBonus;
+}
+
 const TASK_DEFS = [
-  { key: "wake", label: "Wake up at 8:00 AM", sub: "Discipline", icon: Sun, color: "amber" },
+  {
+    key: "wake",
+    label: "Wake up time",
+    sub: "Discipline",
+    icon: Sun,
+    color: "amber",
+    tierSelect: true,
+    tierKey: "wakeTiers",
+    stageField: "wakeStage",
+  },
   {
     key: "run",
     label: "Go for a run",
@@ -84,8 +144,23 @@ const TASK_DEFS = [
     color: "rose",
     tierSelect: true,
     tierKey: "videoTiers",
+    stageField: "videoStage",
   },
   { key: "journal", label: "Journal", sub: "Reflection", icon: BookOpen, color: "sky" },
+  {
+    key: "steps",
+    label: "Daily steps tracker",
+    sub: "Fitness",
+    icon: Footprints,
+    color: "teal",
+    metricField: "stepsCount",
+    metricBonusSuffix: "steps",
+    metricStep: "1000",
+    metricInputMode: "numeric",
+    metricPlaceholder: "Steps",
+    metricHint: "aim for 10,000 steps to get +10 pts",
+    calcBonus: (val, settings) => ({ points: val >= 10000 ? 10 : 0, tierLabel: val >= 10000 ? "10k steps" : null })
+  }
 ];
 
 const BONUS_DEFS = [
@@ -147,8 +222,14 @@ const COLOR_MAP = {
 };
 
 const DEFAULT_SETTINGS = {
-  taskPoints: { wake: 10, run: 10, jobs: 15, journal: 10 },
+  taskPoints: { wake: 0, run: 10, jobs: 15, journal: 10, steps: 0 },
   perfectDayBonus: 20,
+  wakeTiers: [
+    { id: "w8", points: 20, label: "8:00 AM" },
+    { id: "w9", points: 10, label: "9:00 AM" },
+    { id: "w10", points: 5, label: "10:00 AM" },
+    { id: "w11", points: 0, label: "Late / None" }
+  ],
   runTiers: [
     { id: "t1", km: 0.4, points: 5, label: "400m" },
     { id: "t2", km: 1, points: 15, label: "1km" },
@@ -173,6 +254,22 @@ const DEFAULT_REWARDS = [
   { id: "r3", points: 800, text: "A full guilt-free day off", claimed: false },
 ];
 
+const DEFAULT_SHOP_ITEMS = [
+  { id: "s1", points: 75, text: "1 C", color: "teal" },
+  { id: "s2", points: 100, text: "1 J", color: "violet" },
+  { id: "s3", points: 150, text: "Chill rest of the day", color: "amber" },
+  { id: "s4", points: 200, text: "Go out for food", color: "rose" }
+];
+
+function getShopItemIcon(text) {
+  const t = text.toLowerCase();
+  if (t.includes("1 c")) return Coffee;
+  if (t.includes("1 j")) return Sparkles;
+  if (t.includes("chill")) return Compass;
+  if (t.includes("food") || t.includes("eat")) return Utensils;
+  return ShoppingBag;
+}
+
 function fmtDateKey(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -183,6 +280,7 @@ function fmtDateKey(d) {
 function blankDay() {
   return {
     wake: false,
+    wakeStage: null,
     run: false,
     runKm: 0,
     jobs: false,
@@ -190,6 +288,8 @@ function blankDay() {
     video: false,
     videoStage: null,
     journal: false,
+    steps: false,
+    stepsCount: 0,
     bonusFlags: { interview: false, bath: false },
     pointsEarned: 0,
     perfectDay: false,
@@ -238,7 +338,10 @@ function calcJobsBonus(count, settings) {
 
 function recalcDay(day, settings) {
   let pts = 0;
-  if (day.wake) pts += settings.taskPoints.wake;
+  if (day.wake && day.wakeStage) {
+    const tier = settings.wakeTiers.find((t) => t.id === day.wakeStage);
+    if (tier) pts += tier.points;
+  }
   if (day.run) pts += settings.taskPoints.run;
   if (day.run && day.runKm > 0) pts += calcRunBonus(day.runKm, settings).points;
   if (day.jobs) pts += settings.taskPoints.jobs;
@@ -248,9 +351,11 @@ function recalcDay(day, settings) {
     if (tier) pts += tier.points;
   }
   if (day.journal) pts += settings.taskPoints.journal;
+  if (day.steps) pts += settings.taskPoints.steps;
+  if (day.steps && day.stepsCount >= 10000) pts += 10;
   if (day.bonusFlags?.interview) pts += settings.bonusPoints.interview;
   if (day.bonusFlags?.bath) pts += settings.bonusPoints.bath;
-  const allDone = day.wake && day.run && day.jobs && day.video && day.journal;
+  const allDone = day.wake && day.run && day.jobs && day.video && day.journal && day.steps;
   if (allDone) pts += settings.perfectDayBonus;
   return { ...day, pointsEarned: pts, perfectDay: allDone };
 }
@@ -364,7 +469,19 @@ function useSound(enabled) {
   const tick = useCallback(() => blip("A4", "32n", 0), [blip]);
   const undo = useCallback(() => blip("A3", "16n", 0), [blip]);
 
-  return { tick, success, fanfare, undo };
+  const purchase = useCallback(() => {
+    blip("C5", "32n", 0);
+    blip("E5", "32n", 0.04);
+    blip("G5", "32n", 0.08);
+    blip("C6", "16n", 0.12);
+  }, [blip]);
+
+  const fail = useCallback(() => {
+    blip("G3", "8n", 0);
+    blip("F#3", "4n", 0.06);
+  }, [blip]);
+
+  return { tick, success, fanfare, undo, purchase, fail };
 }
 
 /* ---------------------------------------------------------------
@@ -477,8 +594,9 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
   const [metricInput, setMetricInput] = useState(metricValueRaw > 0 ? String(metricValueRaw) : "");
 
   if (def.tierSelect) {
+    const stageField = def.stageField || "videoStage";
     const tiers = points.settings[def.tierKey] || [];
-    const selectedTier = tiers.find((t) => t.id === day.videoStage);
+    const selectedTier = tiers.find((t) => t.id === day[stageField]);
     const done = !!day[def.key];
     return (
       <div className={`rounded-xl border ${done ? c.border : "border-neutral-800"} bg-neutral-900/60 p-4`}>
@@ -496,21 +614,21 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
             </span>
             <span className={`block text-[11px] uppercase tracking-wide ${c.text} opacity-80`}>{def.sub}</span>
           </span>
-          {selectedTier && <span className={`font-mono text-xs ${c.text}`}>+{selectedTier.points}</span>}
+          {selectedTier && selectedTier.points > 0 && <span className={`font-mono text-xs ${c.text}`}>+{selectedTier.points}</span>}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {tiers.map((t) => {
-            const active = day.videoStage === t.id;
+            const active = day[stageField] === t.id;
             return (
               <button
                 key={t.id}
-                onClick={() => onTierSelect(def.key, "videoStage", active ? null : t.id)}
-                className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-all ${
-                  active ? `${c.borderSolid} ${c.bgSoft} ${c.text}` : "border-neutral-700 text-neutral-400"
+                onClick={() => onTierSelect(def.key, stageField, active ? null : t.id)}
+                className={`flex-1 rounded-lg border px-2 py-2 text-center text-xs font-semibold tracking-wide transition-all min-w-[70px] ${
+                  active ? `${c.borderSolid} ${c.bgSoft} ${c.text}` : "border-neutral-700 text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
                 }`}
               >
                 {t.label}
-                <span className="ml-1 font-mono opacity-70">+{t.points}</span>
+                {t.points > 0 && <span className="ml-1 font-mono opacity-80">+{t.points}</span>}
               </button>
             );
           })}
@@ -543,11 +661,13 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
           <span className={`block text-[11px] uppercase tracking-wide ${c.text} opacity-80`}>{def.sub}</span>
         </span>
         <span className="flex flex-col items-end gap-0.5">
-          <span className={`font-mono text-xs ${done ? c.text : "text-neutral-600"}`}>
-            +{points.settings.taskPoints[def.key]}
-          </span>
+          {points.settings.taskPoints[def.key] > 0 && (
+            <span className={`font-mono text-xs ${done ? c.text : "text-neutral-600"}`}>
+              +{points.settings.taskPoints[def.key]}
+            </span>
+          )}
           {hasMetric && bonusInfo.points > 0 && (
-            <span className={`font-mono text-[10px] ${c.text}`}>
+            <span className={`font-mono text-[10px] ${c.text} font-bold animate-pulse`}>
               +{bonusInfo.points} {def.metricBonusSuffix}
             </span>
           )}
@@ -568,16 +688,18 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
               placeholder={def.metricPlaceholder}
               className={`w-32 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 outline-none ${c.focusBorder}`}
             />
-            <span className="text-xs text-neutral-500">{def.metricHint}</span>
+            <span className="text-xs text-neutral-500 font-medium">{def.metricHint}</span>
           </div>
-          <TierLadder
-            value={metricValue}
-            tiers={points.settings[def.tierKey]}
-            thresholdField={def.thresholdField}
-            extraPerUnit={points.settings[def.extraKey]}
-            extraUnitLabel={def.extraUnitLabel}
-            colorKey={def.color}
-          />
+          {def.tierKey && (
+            <TierLadder
+              value={metricValue}
+              tiers={points.settings[def.tierKey]}
+              thresholdField={def.thresholdField}
+              extraPerUnit={points.settings[def.extraKey]}
+              extraUnitLabel={def.extraUnitLabel}
+              colorKey={def.color}
+            />
+          )}
         </div>
       )}
     </div>
@@ -775,6 +897,336 @@ function Checkpoints({ rewards, total, onClaim, onAdd, onDelete }) {
 }
 
 /* ---------------------------------------------------------------
+   CALENDAR PANEL (HISTORY)
+--------------------------------------------------------------- */
+
+function CalendarPanel({ days, selectedDate, onSelectDate }) {
+  const [currentMonth, setCurrentMonth] = useState(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+  const [open, setOpen] = useState(false);
+
+  const prevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  const firstDayIndex = new Date(year, month, 1).getDay();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+
+  const calendarDays = [];
+  for (let i = 0; i < firstDayIndex; i++) {
+    calendarDays.push(null);
+  }
+  for (let i = 1; i <= lastDay; i++) {
+    calendarDays.push(new Date(year, month, i));
+  }
+
+  const monthName = currentMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  return (
+    <div className="mb-6 rounded-2xl border border-neutral-800 bg-neutral-900/30 p-4 transition-all duration-300">
+      <button 
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between font-display text-sm font-semibold text-neutral-300 px-1"
+      >
+        <span className="flex items-center gap-2">
+          <Calendar className="h-4 w-4 text-teal-400" /> 
+          {open ? "Close History Log" : "Open History Log"}
+        </span>
+        <span className="font-mono text-xs text-neutral-500 hover:text-neutral-300 transition-colors">
+          Selected: {selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+        </span>
+      </button>
+
+      {open && (
+        <div className="mt-4 border-t border-neutral-800/80 pt-4 animate-[levelup-pop-in_0.25s_ease-out]">
+          <div className="mb-3 flex items-center justify-between px-1">
+            <button onClick={prevMonth} className="rounded-full p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200">
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <span className="font-display text-sm font-bold text-neutral-200">{monthName}</span>
+            <button onClick={nextMonth} className="rounded-full p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200">
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-mono font-bold text-neutral-500 uppercase tracking-wider mb-2">
+            <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1.5">
+            {calendarDays.map((d, index) => {
+              if (d === null) return <div key={`empty-${index}`} />;
+              const key = fmtDateKey(d);
+              const record = days[key];
+              const isSelected = fmtDateKey(selectedDate) === key;
+              const isToday = fmtDateKey(new Date()) === key;
+              
+              let bgClass = "bg-neutral-900/30 text-neutral-400 border border-neutral-800/60";
+              if (record?.perfectDay) {
+                bgClass = "bg-amber-400/20 text-amber-300 border border-amber-400/40 shadow-[0_0_12px_rgba(251,191,36,0.1)]";
+              } else if (record?.pointsEarned > 0) {
+                bgClass = "bg-teal-400/10 text-teal-300 border border-teal-400/20";
+              }
+
+              return (
+                <button
+                  key={key}
+                  onClick={() => onSelectDate(d)}
+                  className={`relative flex h-9 flex-col items-center justify-center rounded-xl text-xs font-semibold font-mono transition-all hover:bg-neutral-800 ${bgClass} ${
+                    isSelected ? "ring-2 ring-neutral-100 ring-offset-2 ring-offset-neutral-950 scale-105" : ""
+                  } ${isToday ? "font-bold border border-teal-500" : ""}`}
+                >
+                  <span>{d.getDate()}</span>
+                  {isToday && <span className="absolute bottom-1 h-1 w-1 rounded-full bg-teal-400" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   DISPENSARY VIEW (SHOP)
+--------------------------------------------------------------- */
+
+function DispensaryView({ balance, shopItems, purchaseHistory, onBuy, onAdd, onDelete }) {
+  const [adding, setAdding] = useState(false);
+  const [newText, setNewText] = useState("");
+  const [newPoints, setNewPoints] = useState(100);
+  const [newColor, setNewColor] = useState("teal");
+
+  const colors = ["teal", "violet", "amber", "rose"];
+
+  return (
+    <div className="space-y-6">
+      {/* Spendable Balance Panel */}
+      <div 
+        className="relative overflow-hidden rounded-2xl border border-amber-500/30 p-6 text-center"
+        style={{
+          background: "linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.1))",
+          boxShadow: "0 0 35px rgba(245, 158, 11, 0.1)"
+        }}
+      >
+        <div className="absolute top-0 right-0 -mr-6 -mt-6 h-24 w-24 rounded-full bg-amber-500/10 blur-xl"></div>
+        <div className="absolute bottom-0 left-0 -ml-6 -mb-6 h-24 w-24 rounded-full bg-rose-500/10 blur-xl"></div>
+        
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="mb-1 flex items-center gap-1.5 font-mono text-xs uppercase tracking-[0.2em] text-amber-400">
+            <Coins className="h-3.5 w-3.5 animate-bounce" /> Spendable liquid balance
+          </div>
+          <div className="font-display text-4xl font-extrabold tracking-tight text-neutral-50 sm:text-5xl">
+            {balance} <span className="font-mono text-lg font-medium text-neutral-400">PTS</span>
+          </div>
+          <p className="mt-2 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-500">
+            Avail products here. Spending points does NOT reduce your level progress or break your streaks.
+          </p>
+        </div>
+      </div>
+
+      {/* Grid of Items */}
+      <div>
+        <h2 className="mb-3 font-display text-sm font-semibold text-neutral-300">Available Products</h2>
+        <div className="grid grid-cols-2 gap-3">
+          {shopItems.map((item) => {
+            const IconComponent = getShopItemIcon(item.text);
+            const affordable = balance >= item.points;
+            const theme = COLOR_MAP[item.color || "teal"];
+            const pct = Math.min(100, (balance / item.points) * 100);
+            
+            return (
+              <div
+                key={item.id}
+                className={`relative flex flex-col justify-between rounded-xl border p-4 transition-all duration-300 ${
+                  affordable 
+                    ? `bg-neutral-900/80 hover:-translate-y-0.5 hover:shadow-lg ${theme.border} hover:${theme.shadow}`
+                    : "border-neutral-800 bg-neutral-950/40 opacity-70"
+                }`}
+              >
+                {/* Trash button to delete item */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(item.id);
+                  }}
+                  className="absolute top-2 right-2 text-neutral-600 transition-colors hover:text-rose-400"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+
+                <div>
+                  <span className={`inline-flex items-center justify-center rounded-lg p-2 ${theme.bgSoft} ${theme.text} mb-3`}>
+                    <IconComponent className="h-5 w-5" />
+                  </span>
+                  <h3 className="line-clamp-2 text-sm font-semibold text-neutral-100">{item.text}</h3>
+                  <div className="mt-1 font-mono text-xs font-semibold text-neutral-400">
+                    {item.points} pts
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-2">
+                  {affordable ? (
+                    <button
+                      onClick={() => onBuy(item)}
+                      className={`w-full rounded-lg py-2 text-center text-xs font-bold transition-all duration-200 ${theme.bg} text-neutral-950 shadow-[0_0_15px_rgba(45,212,191,0.2)] hover:scale-[1.03] active:scale-95`}
+                    >
+                      AVAIL NOW
+                    </button>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between font-mono text-[9px] text-neutral-500">
+                        <span>{balance}/{item.points} pts</span>
+                        <span>{Math.round(pct)}%</span>
+                      </div>
+                      <div className="h-1 w-full rounded-full bg-neutral-800">
+                        <div 
+                          className={`h-1 rounded-full ${theme.bg} transition-all duration-500`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-center gap-1 font-mono text-[9px] text-neutral-600">
+                        <Lock className="h-2.5 w-2.5" /> Needs {item.points - balance} more
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Product Creator Form */}
+      <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
+        {adding ? (
+          <div className="space-y-3">
+            <h3 className="font-display text-sm font-semibold text-neutral-200">Craft New Reward</h3>
+            
+            <div>
+              <label className="mb-1 block font-mono text-[10px] uppercase text-neutral-500">Reward Title</label>
+              <input
+                value={newText}
+                onChange={(e) => setNewText(e.target.value)}
+                placeholder="e.g. 1 hour of gaming"
+                className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 outline-none focus:border-amber-400"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase text-neutral-500">Points Cost</label>
+                <input
+                  type="number"
+                  min="10"
+                  value={newPoints}
+                  onChange={(e) => setNewPoints(parseInt(e.target.value) || 0)}
+                  className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-xs text-neutral-100 outline-none focus:border-amber-400"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-mono text-[10px] uppercase text-neutral-500">Card Color</label>
+                <div className="flex gap-2 py-1">
+                  {colors.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewColor(c)}
+                      className={`h-5 w-5 rounded-full ${COLOR_MAP[c].bg} transition-transform ${
+                        newColor === c ? "ring-2 ring-neutral-100 scale-110" : "opacity-60"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setAdding(false);
+                  setNewText("");
+                }}
+                className="rounded-lg px-3 py-1.5 text-xs text-neutral-400"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (!newText.trim()) return;
+                  onAdd({ text: newText.trim(), points: newPoints || 50, color: newColor });
+                  setNewText("");
+                  setAdding(false);
+                }}
+                className="rounded-lg bg-gradient-to-r from-amber-400 to-amber-500 px-4 py-1.5 text-xs font-semibold text-neutral-950"
+              >
+                Add Product
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex w-full items-center justify-center gap-1.5 py-1 text-xs font-medium text-neutral-400 transition-colors hover:text-amber-400"
+          >
+            <PlusCircle className="h-4 w-4" /> Add custom product to dispensary
+          </button>
+        )}
+      </div>
+
+      {/* Transaction History Logs */}
+      <div>
+        <h2 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+          <History className="h-3.5 w-3.5 text-neutral-400" /> Recent Drops
+        </h2>
+        
+        {purchaseHistory.length === 0 ? (
+          <div className="rounded-xl border border-neutral-800/60 bg-neutral-950/20 py-8 text-center font-mono text-[10px] text-neutral-600">
+            No items availed yet. Earn points and redeem!
+          </div>
+        ) : (
+          <div className="max-h-48 overflow-y-auto rounded-xl border border-neutral-800 bg-neutral-950/40 divide-y divide-neutral-900/60">
+            {purchaseHistory.map((log) => {
+              const theme = COLOR_MAP[log.color || "teal"];
+              return (
+                <div key={log.id} className="flex items-center justify-between px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-medium text-neutral-200">{log.text}</span>
+                    <span className="ml-2 font-mono text-[9px] text-neutral-500">
+                      {getRelativeTime(log.date)}
+                    </span>
+                  </div>
+                  <span className={`font-mono text-xs font-semibold ${theme.text}`}>
+                    -{log.points} pts
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getRelativeTime(isoString) {
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffSecs < 60) return "just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return new Date(isoString).toLocaleDateString();
+}
+
+/* ---------------------------------------------------------------
    SETTINGS DRAWER
 --------------------------------------------------------------- */
 
@@ -829,7 +1281,7 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
             </div>
           ))}
           <div className="flex items-center justify-between gap-3 pt-1">
-            <span className="text-sm text-neutral-300">Perfect day bonus (all 5 done)</span>
+            <span className="text-sm text-neutral-300">Perfect day bonus (all tasks done)</span>
             <input
               type="number"
               value={local.perfectDayBonus}
@@ -921,6 +1373,23 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
           </div>
         </div>
 
+        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Wake time tiers</p>
+        <div className="mb-5 space-y-2">
+          {local.wakeTiers && local.wakeTiers.map((t) => (
+            <div key={t.id} className="flex items-center gap-2">
+              <span className="text-xs text-neutral-400 w-16">{t.label}</span>
+              <span className="text-xs text-neutral-500">{"\u2192"}</span>
+              <input
+                type="number"
+                value={t.points}
+                onChange={(e) => updateTierList("wakeTiers", t.id, "points", parseInt(e.target.value) || 0)}
+                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-amber-400"
+              />
+              <span className="text-xs text-neutral-500">pts</span>
+            </div>
+          ))}
+        </div>
+
         <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Video tiers</p>
         <div className="mb-5 space-y-2">
           {local.videoTiers.map((t) => (
@@ -986,6 +1455,12 @@ export default function GrindOps() {
   const [days, setDays] = useState({});
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [rewards, setRewards] = useState(DEFAULT_REWARDS);
+  const [spentPoints, setSpentPoints] = useState(0);
+  const [shopItems, setShopItems] = useState(DEFAULT_SHOP_ITEMS);
+  const [purchaseHistory, setPurchaseHistory] = useState([]);
+  const [activeTab, setActiveTab] = useState("console");
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [acquiredItem, setAcquiredItem] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [confettiTick, setConfettiTick] = useState(0);
   const [toast, setToast] = useState(null);
@@ -1004,6 +1479,9 @@ export default function GrindOps() {
         setDays(parsed.days || {});
         setSettings({ ...DEFAULT_SETTINGS, ...(parsed.settings || {}) });
         setRewards(parsed.rewards || DEFAULT_REWARDS);
+        setSpentPoints(parsed.spentPoints || 0);
+        setShopItems(parsed.shopItems || DEFAULT_SHOP_ITEMS);
+        setPurchaseHistory(parsed.purchaseHistory || []);
       }
     } catch (e) {
       // no saved data yet, or it was corrupted, so defaults already in state
@@ -1012,16 +1490,23 @@ export default function GrindOps() {
     }
   }, []);
 
-  const persist = useCallback((nextDays, nextSettings, nextRewards) => {
+  const persist = useCallback((nextDays, nextSettings, nextRewards, nextSpent = spentPoints, nextItems = shopItems, nextHistory = purchaseHistory) => {
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ days: nextDays, settings: nextSettings, rewards: nextRewards })
+        JSON.stringify({
+          days: nextDays,
+          settings: nextSettings,
+          rewards: nextRewards,
+          spentPoints: nextSpent,
+          shopItems: nextItems,
+          purchaseHistory: nextHistory
+        })
       );
     } catch (e) {
       /* storage unavailable or full, fail silently */
     }
-  }, []);
+  }, [spentPoints, shopItems, purchaseHistory]);
 
   const fireToast = (msg) => {
     setToast(msg);
@@ -1031,9 +1516,9 @@ export default function GrindOps() {
 
   const fireConfetti = () => setConfettiTick((t) => t + 1);
 
-  const todayKey = fmtDateKey(new Date());
+  const todayKey = fmtDateKey(selectedDate);
   const today = days[todayKey] || blankDay();
-  const total = computeTotal(days);
+  const total = computeTotal(days) + computeStreakBonuses(days);
   const lvl = levelInfo(total);
   const currentStreak = computeCurrentStreak(days);
   const longestStreak = computeLongestStreak(days);
@@ -1043,8 +1528,8 @@ export default function GrindOps() {
     const prevDay = days[todayKey] || blankDay();
     const newDays = { ...days, [todayKey]: recalced };
 
-    const prevTotal = computeTotal(days);
-    const newTotal = computeTotal(newDays);
+    const prevTotal = computeTotal(days) + computeStreakBonuses(days);
+    const newTotal = computeTotal(newDays) + computeStreakBonuses(newDays);
     const prevLevel = levelInfo(prevTotal).level;
     const newLevel = levelInfo(newTotal).level;
 
@@ -1142,6 +1627,60 @@ export default function GrindOps() {
     persist(days, settings, next);
   };
 
+  const buyShopItem = (item) => {
+    const balance = total - spentPoints;
+    if (balance < item.points) {
+      sound.fail();
+      fireToast("⚠️ Insufficient liquid points!");
+      return;
+    }
+
+    const nextSpent = spentPoints + item.points;
+    const nextHistory = [
+      {
+        id: `p${Date.now()}`,
+        itemId: item.id,
+        text: item.text,
+        points: item.points,
+        color: item.color,
+        date: new Date().toISOString()
+      },
+      ...purchaseHistory
+    ];
+
+    setSpentPoints(nextSpent);
+    setPurchaseHistory(nextHistory);
+    persist(days, settings, rewards, nextSpent, shopItems, nextHistory);
+    
+    sound.purchase();
+    fireConfetti();
+    setAcquiredItem(item);
+  };
+
+  const addShopItem = ({ text, points, color }) => {
+    const nextItems = [
+      ...shopItems,
+      {
+        id: `s${Date.now()}`,
+        text,
+        points,
+        color
+      }
+    ];
+    setShopItems(nextItems);
+    persist(days, settings, rewards, spentPoints, nextItems, purchaseHistory);
+    sound.success();
+    fireToast(`Added "${text}" to dispensary`);
+  };
+
+  const deleteShopItem = (id) => {
+    const nextItems = shopItems.filter((i) => i.id !== id);
+    setShopItems(nextItems);
+    persist(days, settings, rewards, spentPoints, nextItems, purchaseHistory);
+    sound.undo();
+    fireToast("Removed item from dispensary");
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center bg-neutral-950">
@@ -1152,7 +1691,7 @@ export default function GrindOps() {
 
   return (
     <div
-      className="min-h-screen w-full pb-16 text-neutral-100"
+      className="min-h-screen w-full pb-24 text-neutral-100"
       style={{
         background:
           "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(45,212,191,0.08), transparent), radial-gradient(ellipse 60% 40% at 100% 100%, rgba(167,139,250,0.06), transparent), #0a0c0f",
@@ -1189,7 +1728,45 @@ export default function GrindOps() {
       <Toast toast={toast} />
       <LevelUpFlash data={levelUp} />
 
-      <div className="mx-auto max-w-md px-4 pt-6 sm:max-w-lg">
+      {/* LOOT ACQUIRED DOPAMINE POPUP */}
+      {acquiredItem && (
+        <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-black/90 p-4 backdrop-blur-md transition-all duration-500">
+          <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-amber-500/40 bg-neutral-950 p-8 text-center shadow-[0_0_60px_rgba(245,158,11,0.25)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
+            <div className="absolute inset-0 -z-10 animate-spin bg-[radial-gradient(circle_at_center,rgba(245,158,11,0.15),transparent_60%)] opacity-80" style={{ animationDuration: "12s" }} />
+
+            <span className="mb-4 flex h-20 w-20 items-center justify-center rounded-2xl border-2 border-amber-400 bg-amber-400/10 text-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.4)] animate-bounce">
+              {React.createElement(getShopItemIcon(acquiredItem.text), { className: "h-10 w-10" })}
+            </span>
+
+            <div className="font-mono text-xs uppercase tracking-[0.3em] text-amber-500">grind dispensary // drop claim</div>
+            
+            <h2 className="mt-2 text-2xl font-extrabold text-neutral-100 tracking-tight">
+              {acquiredItem.text}
+            </h2>
+            
+            <p className="mt-3 max-w-xs font-mono text-[10px] text-neutral-500 leading-relaxed">
+              Points successfully converted into life rewards. Maintain your discipline to earn more items.
+            </p>
+
+            <div className="mt-6 flex items-center justify-center gap-1.5 rounded-full border border-neutral-800 bg-neutral-900/50 px-4 py-1.5">
+              <Coins className="h-3.5 w-3.5 text-amber-500 animate-spin" />
+              <span className="font-mono text-xs text-neutral-300">-{acquiredItem.points} pts</span>
+            </div>
+
+            <button
+              onClick={() => {
+                setAcquiredItem(null);
+                sound.success();
+              }}
+              className="mt-8 w-full rounded-2xl bg-amber-400 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(245,158,11,0.3)] transition-all hover:scale-105 active:scale-95"
+            >
+              CLAIM DROP
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="mx-auto max-w-md px-4 pt-6 sm:max-w-lg pb-12">
         {/* HEADER */}
         <div className="mb-5 flex items-start justify-between">
           <div>
@@ -1206,106 +1783,202 @@ export default function GrindOps() {
           </button>
         </div>
 
-        {/* TICKER + STREAK */}
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
-          <Ticker value={total} />
-          <div className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-black/40 px-3 py-1.5">
-            <Flame className={`h-4 w-4 ${currentStreak > 0 ? "flame-flicker text-amber-400" : "text-neutral-600"}`} />
-            <span className="font-mono text-sm text-neutral-200">{currentStreak}d</span>
-            {longestStreak > currentStreak && (
-              <span className="font-mono text-[10px] text-neutral-500">best {longestStreak}d</span>
-            )}
-          </div>
-        </div>
+        {/* TAB SWITCHER */}
+        {activeTab === "console" ? (
+          <>
+            {/* TICKER + STREAK */}
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
+              <div className="flex flex-col gap-1">
+                <Ticker value={total} />
+                <div className="flex items-center gap-1 font-mono text-[10px] text-neutral-500">
+                  <Coins className="h-3 w-3 text-amber-500" />
+                  <span>Liquid Spendable: <span className="font-semibold text-neutral-300">{total - spentPoints} pts</span></span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-black/40 px-3 py-1.5">
+                <Flame className={`h-4 w-4 ${currentStreak > 0 ? "flame-flicker text-amber-400" : "text-neutral-600"}`} />
+                <span className="font-mono text-sm text-neutral-200">{currentStreak}d</span>
+                {longestStreak > currentStreak && (
+                  <span className="font-mono text-[10px] text-neutral-500">best {longestStreak}d</span>
+                )}
+              </div>
+            </div>
 
-        {/* LEVEL PROGRESS */}
-        <div className="mb-6">
-          <div className="mb-1 flex justify-between font-mono text-[10px] text-neutral-500">
-            <span>{lvl.into} / {LEVEL_STEP} to next level</span>
-            <span>{Math.round(lvl.pct)}%</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-neutral-800">
-            <div
-              className="h-1.5 rounded-full bg-gradient-to-r from-teal-400 via-violet-400 to-amber-400 transition-all duration-700"
-              style={{ width: `${lvl.pct}%` }}
+            {/* LEVEL PROGRESS */}
+            <div className="mb-6">
+              <div className="mb-1 flex justify-between font-mono text-[10px] text-neutral-500">
+                <span>{lvl.into} / {LEVEL_STEP} to next level</span>
+                <span>{Math.round(lvl.pct)}%</span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-neutral-800">
+                <div
+                  className="h-1.5 rounded-full bg-gradient-to-r from-teal-400 via-violet-400 to-amber-400 transition-all duration-700"
+                  style={{ width: `${lvl.pct}%` }}
+                />
+              </div>
+            </div>
+
+            {/* CALENDAR HISTORY PANEL */}
+            <CalendarPanel
+              days={days}
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
             />
-          </div>
-        </div>
 
-        {/* TODAY */}
-        <div className="mb-7">
-          <div className="mb-2.5 flex items-center justify-between">
-            <h2 className="font-display text-sm font-semibold text-neutral-300">
-              Today ·{" "}
-              {new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
-            </h2>
-            <span className="font-mono text-xs text-neutral-500">
-              {[today.wake, today.run, today.jobs, today.video, today.journal].filter(Boolean).length}/5
-            </span>
-          </div>
-          <div className="space-y-2.5">
-            {TASK_DEFS.map((def) => (
-              <TaskRow
-                key={def.key}
-                def={def}
-                day={today}
-                points={{ settings }}
-                onToggle={toggleTask}
-                onMetricChange={setMetric}
-                onTierSelect={selectVideoStage}
-              />
-            ))}
-          </div>
-        </div>
+            {/* TODAY HABITS */}
+            <div className="mb-7">
+              <div className="mb-2.5 flex items-center justify-between">
+                <h2 className="font-display text-sm font-semibold text-neutral-300">
+                  {selectedDate.toDateString() === new Date().toDateString() ? "Today" : selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} ·
+                </h2>
+                <span className="font-mono text-xs text-neutral-500">
+                  {TASK_DEFS.map((def) => today[def.key]).filter(Boolean).length}/{TASK_DEFS.length}
+                </span>
+              </div>
+              <div className="space-y-2.5">
+                {TASK_DEFS.map((def) => (
+                  <TaskRow
+                    key={def.key}
+                    def={def}
+                    day={today}
+                    points={{ settings }}
+                    onToggle={toggleTask}
+                    onMetricChange={setMetric}
+                    onTierSelect={selectVideoStage}
+                  />
+                ))}
+              </div>
+            </div>
 
-        {/* BONUS MOVES */}
-        <div className="mb-7">
-          <h2 className="mb-2.5 font-display text-sm font-semibold text-neutral-300">Bonus moves</h2>
-          <div className="grid grid-cols-2 gap-2.5">
-            {BONUS_DEFS.map((b) => {
-              const bc = COLOR_MAP[b.color];
-              const active = !!today.bonusFlags?.[b.key];
-              const BIcon = b.icon;
-              return (
-                <button
-                  key={b.key}
-                  onClick={() => toggleBonus(b.key)}
-                  className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-center transition-all ${
-                    active ? `${bc.borderSolid} ${bc.bgSoft} ${bc.shadow}` : "border-neutral-800 bg-neutral-900/60"
-                  }`}
-                >
-                  <BIcon className={`h-4 w-4 ${active ? bc.text : "text-neutral-500"}`} />
-                  <span className={`text-xs font-medium ${active ? "text-neutral-100" : "text-neutral-400"}`}>
-                    {b.label}
-                  </span>
-                  <span className={`font-mono text-[10px] ${active ? bc.text : "text-neutral-600"}`}>
-                    +{settings.bonusPoints[b.key]}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
+            {/* BONUS MOVES */}
+            <div className="mb-7">
+              <h2 className="mb-2.5 font-display text-sm font-semibold text-neutral-300">Bonus moves</h2>
+              <div className="grid grid-cols-2 gap-2.5">
+                {BONUS_DEFS.map((b) => {
+                  const bc = COLOR_MAP[b.color];
+                  const active = !!today.bonusFlags?.[b.key];
+                  const BIcon = b.icon;
+                  return (
+                    <button
+                      key={b.key}
+                      onClick={() => toggleBonus(b.key)}
+                      className={`flex flex-col items-center gap-1.5 rounded-xl border px-3 py-3 text-center transition-all ${
+                        active ? `${bc.borderSolid} ${bc.bgSoft} ${bc.shadow}` : "border-neutral-800 bg-neutral-900/60"
+                      }`}
+                    >
+                      <BIcon className={`h-4 w-4 ${active ? bc.text : "text-neutral-500"}`} />
+                      <span className={`text-xs font-medium ${active ? "text-neutral-100" : "text-neutral-400"}`}>
+                        {b.label}
+                      </span>
+                      <span className={`font-mono text-[10px] ${active ? bc.text : "text-neutral-600"}`}>
+                        +{settings.bonusPoints[b.key]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
 
-        {/* WEEK STRIP */}
-        <div className="mb-7">
-          <h2 className="mb-3 font-display text-sm font-semibold text-neutral-300">Last 7 days</h2>
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4 pb-6">
-            <WeekStrip days={days} />
-          </div>
-        </div>
+            {/* WEEK STRIP */}
+            <div className="mb-7">
+              <h2 className="mb-3 font-display text-sm font-semibold text-neutral-300">Last 7 days</h2>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4 pb-6">
+                <WeekStrip days={days} />
+              </div>
+            </div>
 
-        {/* CHECKPOINTS */}
-        <div className="mb-10">
-          <h2 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
-            <Trophy className="h-3.5 w-3.5 text-amber-400" /> Checkpoints
-          </h2>
-          <Checkpoints rewards={rewards} total={total} onClaim={claimReward} onAdd={addReward} onDelete={deleteReward} />
-        </div>
+            {/* STREAK BONUS MILESTONES */}
+            <div className="mb-8 border-b border-neutral-900 pb-8">
+              <h2 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+                <Flame className="h-4 w-4 text-amber-400" /> Streak Milestones
+              </h2>
+              <div className="grid grid-cols-2 gap-2">
+                {STREAK_BONUSES.map((b) => {
+                  const active = currentStreak >= b.day;
+                  return (
+                    <div
+                      key={b.day}
+                      className={`flex flex-col justify-between p-3 rounded-xl border transition-all ${
+                        active 
+                          ? "border-amber-400/50 bg-amber-400/5 shadow-[0_0_15px_rgba(251,191,36,0.06)]"
+                          : "border-neutral-800/80 bg-neutral-950/20 opacity-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <Flame className={`h-3.5 w-3.5 ${active ? "text-amber-400 flame-flicker" : "text-neutral-600"}`} />
+                        <span className={`text-xs font-semibold ${active ? "text-neutral-200" : "text-neutral-400"}`}>
+                          {b.day}d Streak
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between">
+                        <span className="text-[9px] text-neutral-500 uppercase tracking-wider">{b.label}</span>
+                        <span className={`font-mono text-xs font-bold ${active ? "text-amber-400" : "text-neutral-500"}`}>
+                          +{b.points} pts
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
-        <p className="pb-4 text-center font-mono text-[10px] text-neutral-600">
+            {/* CHECKPOINTS */}
+            <div className="mb-10">
+              <h2 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+                <Trophy className="h-3.5 w-3.5 text-amber-400" /> Checkpoints
+              </h2>
+              <Checkpoints rewards={rewards} total={total} onClaim={claimReward} onAdd={addReward} onDelete={deleteReward} />
+            </div>
+          </>
+        ) : (
+          <DispensaryView
+            balance={total - spentPoints}
+            shopItems={shopItems}
+            purchaseHistory={purchaseHistory}
+            onBuy={buyShopItem}
+            onAdd={addShopItem}
+            onDelete={deleteShopItem}
+          />
+        )}
+
+        <p className="pb-8 text-center font-mono text-[10px] text-neutral-600">
           saved automatically to this browser
         </p>
+      </div>
+
+      {/* FIXED BOTTOM NAVIGATION BAR */}
+      <div className="fixed bottom-6 inset-x-0 z-50 flex justify-center px-4">
+        <div className="flex items-center gap-6 rounded-full border border-neutral-800 bg-neutral-950/90 px-6 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md">
+          <button
+            onClick={() => {
+              setActiveTab("console");
+              sound.tick();
+            }}
+            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 ${
+              activeTab === "console"
+                ? "bg-gradient-to-r from-teal-400 to-violet-500 text-neutral-950 shadow-[0_0_15px_rgba(45,212,191,0.4)]"
+                : "text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            <Compass className="h-4 w-4" />
+            Console
+          </button>
+          
+          <button
+            onClick={() => {
+              setActiveTab("dispensary");
+              sound.tick();
+            }}
+            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 ${
+              activeTab === "dispensary"
+                ? "bg-gradient-to-r from-amber-400 to-rose-500 text-neutral-950 shadow-[0_0_15px_rgba(245,158,11,0.4)]"
+                : "text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            <ShoppingBag className="h-4 w-4" />
+            Dispensary
+          </button>
+        </div>
       </div>
 
       <SettingsDrawer
