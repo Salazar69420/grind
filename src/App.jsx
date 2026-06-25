@@ -146,21 +146,7 @@ const TASK_DEFS = [
     tierKey: "videoTiers",
     stageField: "videoStage",
   },
-  { key: "journal", label: "Journal", sub: "Reflection", icon: BookOpen, color: "sky" },
-  {
-    key: "steps",
-    label: "Daily steps tracker",
-    sub: "Fitness",
-    icon: Footprints,
-    color: "teal",
-    metricField: "stepsCount",
-    metricBonusSuffix: "steps",
-    metricStep: "1000",
-    metricInputMode: "numeric",
-    metricPlaceholder: "Steps",
-    metricHint: "aim for 10,000 steps to get +10 pts",
-    calcBonus: (val, settings) => ({ points: val >= 10000 ? 10 : 0, tierLabel: val >= 10000 ? "10k steps" : null })
-  }
+  { key: "journal", label: "Journal", sub: "Reflection", icon: BookOpen, color: "sky" }
 ];
 
 const BONUS_DEFS = [
@@ -222,7 +208,7 @@ const COLOR_MAP = {
 };
 
 const DEFAULT_SETTINGS = {
-  taskPoints: { wake: 0, run: 10, jobs: 15, journal: 10, steps: 0 },
+  taskPoints: { wake: 0, run: 10, jobs: 15, journal: 10 },
   perfectDayBonus: 20,
   wakeTiers: [
     { id: "w8", points: 20, label: "8:00 AM" },
@@ -288,8 +274,6 @@ function blankDay() {
     video: false,
     videoStage: null,
     journal: false,
-    steps: false,
-    stepsCount: 0,
     bonusFlags: { interview: false, bath: false },
     pointsEarned: 0,
     perfectDay: false,
@@ -351,11 +335,9 @@ function recalcDay(day, settings) {
     if (tier) pts += tier.points;
   }
   if (day.journal) pts += settings.taskPoints.journal;
-  if (day.steps) pts += settings.taskPoints.steps;
-  if (day.steps && day.stepsCount >= 10000) pts += 10;
   if (day.bonusFlags?.interview) pts += settings.bonusPoints.interview;
   if (day.bonusFlags?.bath) pts += settings.bonusPoints.bath;
-  const allDone = day.wake && day.run && day.jobs && day.video && day.journal && day.steps;
+  const allDone = day.wake && day.run && day.jobs && day.video && day.journal;
   if (allDone) pts += settings.perfectDayBonus;
   return { ...day, pointsEarned: pts, perfectDay: allDone };
 }
