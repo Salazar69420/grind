@@ -586,7 +586,7 @@ function LevelUpFlash({ data }) {
    TASK ROW
 --------------------------------------------------------------- */
 
-function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
+function TaskRow({ def, day, points, onToggle, onTierSelect, onMetricConfirm }) {
   const c = COLOR_MAP[def.color];
   const Icon = def.icon;
   const hasMetric = !!def.metricField;
@@ -598,10 +598,14 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
   const savedStage = day[stageField] || "";
   const [localStage, setLocalStage] = useState(savedStage);
 
+  const done = !!day[def.key];
+  const [localChecked, setLocalChecked] = useState(done);
+
   // Sync local draft state with global state when selected day changes (e.g. via calendar)
   useEffect(() => {
     setMetricInput(metricValueRaw > 0 ? String(metricValueRaw) : "");
-  }, [metricValueRaw]);
+    setLocalChecked(done);
+  }, [metricValueRaw, done]);
 
   useEffect(() => {
     setLocalStage(savedStage);
@@ -667,33 +671,39 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
     );
   }
 
-  const done = !!day[def.key];
   const metricValue = metricValueRaw;
-  const bonusInfo = hasMetric && done && metricValue > 0 ? def.calcBonus(metricValue, points.settings) : { points: 0, tierLabel: null };
-  const isMetricDirty = hasMetric && String(metricValue) !== metricInput;
+  const draftMetricValue = hasMetric && localChecked ? (parseFloat(metricInput) || 0) : 0;
+  const bonusInfo = hasMetric && localChecked && draftMetricValue > 0 ? def.calcBonus(draftMetricValue, points.settings) : { points: 0, tierLabel: null };
+  const isMetricDirty = hasMetric && (localChecked !== done || (localChecked && String(metricValue) !== metricInput));
 
   return (
-    <div className={`rounded-xl border ${done && !isMetricDirty ? c.border : "border-neutral-800"} bg-neutral-900/60 transition-colors`}>
+    <div className={`rounded-xl border ${(hasMetric ? localChecked && !isMetricDirty : done) ? c.border : "border-neutral-800"} bg-neutral-900/60 transition-colors`}>
       <button
-        onClick={() => onToggle(def.key)}
+        onClick={() => {
+          if (hasMetric) {
+            setLocalChecked(!localChecked);
+          } else {
+            onToggle(def.key);
+          }
+        }}
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
       >
         <span
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
-            done && !isMetricDirty ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
+            (hasMetric ? localChecked && !isMetricDirty : done) ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
           }`}
         >
-          {done && !isMetricDirty ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
+          {(hasMetric ? localChecked && !isMetricDirty : done) ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
         </span>
         <span className="flex-1">
-          <span className={`block text-sm font-medium ${done ? "text-neutral-100" : "text-neutral-300"}`}>
+          <span className={`block text-sm font-medium ${(hasMetric ? localChecked : done) ? "text-neutral-100" : "text-neutral-300"}`}>
             {def.label}
           </span>
           <span className={`block text-[11px] uppercase tracking-wide ${c.text} opacity-80`}>{def.sub}</span>
         </span>
         <span className="flex flex-col items-end gap-0.5">
           {points.settings.taskPoints[def.key] > 0 && (
-            <span className={`font-mono text-xs ${done ? c.text : "text-neutral-600"}`}>
+            <span className={`font-mono text-xs ${(hasMetric ? localChecked : done) ? c.text : "text-neutral-600"}`}>
               +{points.settings.taskPoints[def.key]}
             </span>
           )}
@@ -705,7 +715,7 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
         </span>
       </button>
 
-      {hasMetric && done && (
+      {hasMetric && localChecked && (
         <div className="border-t border-neutral-800/80 px-4 py-3 space-y-3">
           <div className="flex items-center gap-2">
             <input
@@ -721,21 +731,9 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
             <span className="text-xs text-neutral-500 font-medium">{def.metricHint}</span>
           </div>
 
-          {/* CONFIRM BUTTON FOR METRIC VALUES */}
-          {isMetricDirty && (
-            <button
-              onClick={() => {
-                onMetricChange(def.metricField, parseFloat(metricInput) || 0);
-              }}
-              className={`w-full rounded-lg ${c.bg} text-neutral-950 py-2 text-center text-xs font-extrabold uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all duration-200 animate-pulse`}
-            >
-              Confirm {def.metricPlaceholder || "Value"}
-            </button>
-          )}
-
           {def.tierKey && (
             <TierLadder
-              value={metricValue}
+              value={draftMetricValue}
               tiers={points.settings[def.tierKey]}
               thresholdField={def.thresholdField}
               extraPerUnit={points.settings[def.extraKey]}
@@ -743,6 +741,20 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
               colorKey={def.color}
             />
           )}
+        </div>
+      )}
+
+      {/* CONFIRM BUTTON FOR METRIC VALUES / STATUS CHANGE */}
+      {isMetricDirty && (
+        <div className="px-4 pb-3">
+          <button
+            onClick={() => {
+              onMetricConfirm(def.key, def.metricField, localChecked, localChecked ? (parseFloat(metricInput) || 0) : 0);
+            }}
+            className={`w-full rounded-lg ${c.bg} text-neutral-950 py-2 text-center text-xs font-extrabold uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all duration-200 animate-pulse`}
+          >
+            Confirm {def.label}
+          </button>
         </div>
       )}
     </div>
@@ -1273,7 +1285,7 @@ function getRelativeTime(isoString) {
    SETTINGS DRAWER
 --------------------------------------------------------------- */
 
-function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onClose }) {
+function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onClose, onResetAllData, totalPoints }) {
   const [local, setLocal] = useState(settings);
 
   useEffect(() => setLocal(settings), [settings, open]);
@@ -1296,9 +1308,14 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
         className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-neutral-800 bg-neutral-950 p-5 sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h3 className="font-display text-base font-semibold text-neutral-100">Tune the system</h3>
-          <button onClick={onClose} className="text-neutral-500">
+        <div className="mb-4 flex items-center justify-between border-b border-neutral-800 pb-3">
+          <div>
+            <h3 className="font-display text-base font-semibold text-neutral-100">Tune the system</h3>
+            <div className="mt-1 font-mono text-[11px] text-neutral-400">
+              Current Balance: <span className="font-semibold text-teal-400">{totalPoints} pts</span>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-300 transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -1310,168 +1327,196 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
           </button>
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Task points</p>
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Task points</p>
         <div className="mb-5 space-y-2">
           {TASK_DEFS.filter((def) => !def.tierSelect).map((def) => (
-            <div key={def.key} className="flex items-center justify-between gap-3">
-              <span className="text-sm text-neutral-300">{def.label}</span>
-              <input
-                type="number"
-                value={local.taskPoints[def.key]}
-                onChange={(e) => updateTaskPoint(def.key, parseInt(e.target.value) || 0)}
-                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-sm text-neutral-100 outline-none focus:border-teal-400"
-              />
+            <div key={def.key} className="flex items-center justify-between gap-3 border-b border-neutral-900/40 pb-2 last:border-0 last:pb-0">
+              <span className="text-xs text-neutral-300">{def.label}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <input
+                  type="number"
+                  value={local.taskPoints[def.key]}
+                  onChange={(e) => updateTaskPoint(def.key, parseInt(e.target.value) || 0)}
+                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
+                />
+                <span className="text-[10px] text-neutral-500 w-6">pts</span>
+              </div>
             </div>
           ))}
-          <div className="flex items-center justify-between gap-3 pt-1">
-            <span className="text-sm text-neutral-300">Perfect day bonus (all tasks done)</span>
-            <input
-              type="number"
-              value={local.perfectDayBonus}
-              onChange={(e) => setLocal((l) => ({ ...l, perfectDayBonus: parseInt(e.target.value) || 0 }))}
-              className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-sm text-neutral-100 outline-none focus:border-amber-400"
-            />
+          <div className="flex items-center justify-between gap-3 pt-1 border-t border-neutral-900/45">
+            <span className="text-xs text-neutral-300">Perfect day bonus</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                value={local.perfectDayBonus}
+                onChange={(e) => setLocal((l) => ({ ...l, perfectDayBonus: parseInt(e.target.value) || 0 }))}
+                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-amber-400"
+              />
+              <span className="text-[10px] text-neutral-500 w-6">pts</span>
+            </div>
           </div>
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Run distance tiers</p>
-        <div className="mb-5 space-y-2">
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Run distance tiers</p>
+        <div className="mb-5 space-y-2.5">
           {local.runTiers
             .slice()
             .sort((a, b) => a.km - b.km)
             .map((t) => (
-              <div key={t.id} className="flex items-center gap-2">
+              <div key={t.id} className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 items-center border-b border-neutral-900/50 pb-2 last:border-0 last:pb-0">
                 <input
                   type="text"
                   value={t.label}
                   onChange={(e) => updateTierList("runTiers", t.id, "label", e.target.value)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-teal-400"
+                  className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-teal-400"
+                  placeholder="Label"
                 />
-                <input
-                  type="number"
-                  step="0.1"
-                  value={t.km}
-                  onChange={(e) => updateTierList("runTiers", t.id, "km", parseFloat(e.target.value) || 0)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
-                />
-                <span className="text-xs text-neutral-500">km {"\u2192"}</span>
-                <input
-                  type="number"
-                  value={t.points}
-                  onChange={(e) => updateTierList("runTiers", t.id, "points", parseInt(e.target.value) || 0)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
-                />
-                <span className="text-xs text-neutral-500">pts</span>
+                <div className="flex items-center gap-1 min-w-0">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={t.km}
+                    onChange={(e) => updateTierList("runTiers", t.id, "km", parseFloat(e.target.value) || 0)}
+                    className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
+                  />
+                  <span className="text-[10px] text-neutral-500 shrink-0 w-4">km</span>
+                </div>
+                <div className="flex items-center gap-1 min-w-0">
+                  <input
+                    type="number"
+                    value={t.points}
+                    onChange={(e) => updateTierList("runTiers", t.id, "points", parseInt(e.target.value) || 0)}
+                    className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
+                  />
+                  <span className="text-[10px] text-neutral-500 shrink-0 w-5">pts</span>
+                </div>
               </div>
             ))}
-          <div className="flex items-center justify-between gap-3 pt-1">
-            <span className="text-xs text-neutral-400">Bonus per extra km beyond top tier</span>
-            <input
-              type="number"
-              value={local.extraPerKm}
-              onChange={(e) => setLocal((l) => ({ ...l, extraPerKm: parseInt(e.target.value) || 0 }))}
-              className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
-            />
+          <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-neutral-900/45">
+            <span className="text-xs text-neutral-400">Bonus/extra km beyond top</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                value={local.extraPerKm}
+                onChange={(e) => setLocal((l) => ({ ...l, extraPerKm: parseInt(e.target.value) || 0 }))}
+                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-teal-400"
+              />
+              <span className="text-[10px] text-neutral-500 w-6">pts</span>
+            </div>
           </div>
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Job application tiers</p>
-        <div className="mb-2 space-y-2">
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Job application tiers</p>
+        <div className="mb-5 space-y-2.5">
           {local.jobTiers
             .slice()
             .sort((a, b) => a.count - b.count)
             .map((t) => (
-              <div key={t.id} className="flex items-center gap-2">
+              <div key={t.id} className="grid grid-cols-[1.2fr_1fr_1fr] gap-2 items-center border-b border-neutral-900/50 pb-2 last:border-0 last:pb-0">
                 <input
                   type="text"
                   value={t.label}
                   onChange={(e) => updateTierList("jobTiers", t.id, "label", e.target.value)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-violet-400"
+                  className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-violet-400"
+                  placeholder="Label"
                 />
-                <input
-                  type="number"
-                  step="1"
-                  value={t.count}
-                  onChange={(e) => updateTierList("jobTiers", t.id, "count", parseInt(e.target.value) || 0)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
-                />
-                <span className="text-xs text-neutral-500">apps {"\u2192"}</span>
-                <input
-                  type="number"
-                  value={t.points}
-                  onChange={(e) => updateTierList("jobTiers", t.id, "points", parseInt(e.target.value) || 0)}
-                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
-                />
-                <span className="text-xs text-neutral-500">pts</span>
+                <div className="flex items-center gap-1 min-w-0">
+                  <input
+                    type="number"
+                    step="1"
+                    value={t.count}
+                    onChange={(e) => updateTierList("jobTiers", t.id, "count", parseInt(e.target.value) || 0)}
+                    className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
+                  />
+                  <span className="text-[10px] text-neutral-500 shrink-0 w-6">apps</span>
+                </div>
+                <div className="flex items-center gap-1 min-w-0">
+                  <input
+                    type="number"
+                    value={t.points}
+                    onChange={(e) => updateTierList("jobTiers", t.id, "points", parseInt(e.target.value) || 0)}
+                    className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
+                  />
+                  <span className="text-[10px] text-neutral-500 shrink-0 w-5">pts</span>
+                </div>
               </div>
             ))}
-          <div className="flex items-center justify-between gap-3 pt-1">
-            <span className="text-xs text-neutral-400">Bonus per extra application beyond top tier</span>
-            <input
-              type="number"
-              value={local.extraPerApp}
-              onChange={(e) => setLocal((l) => ({ ...l, extraPerApp: parseInt(e.target.value) || 0 }))}
-              className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
-            />
+          <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-neutral-900/45">
+            <span className="text-xs text-neutral-400">Bonus/extra app beyond top</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <input
+                type="number"
+                value={local.extraPerApp}
+                onChange={(e) => setLocal((l) => ({ ...l, extraPerApp: parseInt(e.target.value) || 0 }))}
+                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
+              />
+              <span className="text-[10px] text-neutral-500 w-6">pts</span>
+            </div>
           </div>
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Wake time tiers</p>
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Wake time tiers</p>
         <div className="mb-5 space-y-2">
           {local.wakeTiers && local.wakeTiers.map((t) => (
-            <div key={t.id} className="flex items-center gap-2">
-              <span className="text-xs text-neutral-400 w-16">{t.label}</span>
-              <span className="text-xs text-neutral-500">{"\u2192"}</span>
-              <input
-                type="number"
-                value={t.points}
-                onChange={(e) => updateTierList("wakeTiers", t.id, "points", parseInt(e.target.value) || 0)}
-                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-amber-400"
-              />
-              <span className="text-xs text-neutral-500">pts</span>
+            <div key={t.id} className="flex items-center justify-between gap-2 border-b border-neutral-900/50 pb-2 last:border-0 last:pb-0">
+              <span className="text-xs text-neutral-400 w-20 shrink-0">{t.label}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <input
+                  type="number"
+                  value={t.points}
+                  onChange={(e) => updateTierList("wakeTiers", t.id, "points", parseInt(e.target.value) || 0)}
+                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-amber-400"
+                />
+                <span className="text-[10px] text-neutral-500 w-6">pts</span>
+              </div>
             </div>
           ))}
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Video tiers</p>
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Video tiers</p>
         <div className="mb-5 space-y-2">
           {local.videoTiers.map((t) => (
-            <div key={t.id} className="flex items-center gap-2">
+            <div key={t.id} className="grid grid-cols-[1.5fr_1fr] gap-2 items-center border-b border-neutral-900/50 pb-2 last:border-0 last:pb-0">
               <input
                 type="text"
                 value={t.label}
                 onChange={(e) => updateTierList("videoTiers", t.id, "label", e.target.value)}
-                className="flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-rose-400"
+                className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:border-rose-400"
               />
-              <input
-                type="number"
-                value={t.points}
-                onChange={(e) => updateTierList("videoTiers", t.id, "points", parseInt(e.target.value) || 0)}
-                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-rose-400"
-              />
-              <span className="text-xs text-neutral-500">pts</span>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <input
+                  type="number"
+                  value={t.points}
+                  onChange={(e) => updateTierList("videoTiers", t.id, "points", parseInt(e.target.value) || 0)}
+                  className="w-full min-w-0 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-rose-400"
+                />
+                <span className="text-[10px] text-neutral-500 shrink-0 w-6">pts</span>
+              </div>
             </div>
           ))}
         </div>
 
-        <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500">Bonus moves</p>
-        <div className="mb-5 space-y-2">
+        <p className="mb-2.5 font-mono text-[10px] uppercase tracking-[0.2em] text-neutral-500 border-b border-neutral-800/40 pb-1">Bonus moves</p>
+        <div className="mb-5 space-y-2 border-b border-neutral-900 pb-2">
           {BONUS_DEFS.map((b) => (
-            <div key={b.key} className="flex items-center justify-between gap-3">
-              <span className="text-sm text-neutral-300">{b.label}</span>
-              <input
-                type="number"
-                value={local.bonusPoints[b.key]}
-                onChange={(e) =>
-                  setLocal((l) => ({ ...l, bonusPoints: { ...l.bonusPoints, [b.key]: parseInt(e.target.value) || 0 } }))
-                }
-                className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-sm text-neutral-100 outline-none focus:border-violet-400"
-              />
+            <div key={b.key} className="flex items-center justify-between gap-3 border-b border-neutral-900/50 pb-2 last:border-0 last:pb-0">
+              <span className="text-xs text-neutral-300">{b.label}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <input
+                  type="number"
+                  value={local.bonusPoints[b.key]}
+                  onChange={(e) =>
+                    setLocal((l) => ({ ...l, bonusPoints: { ...l.bonusPoints, [b.key]: parseInt(e.target.value) || 0 } }))
+                  }
+                  className="w-16 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-right font-mono text-xs text-neutral-100 outline-none focus:border-violet-400"
+                />
+                <span className="text-[10px] text-neutral-500 w-6">pts</span>
+              </div>
             </div>
           ))}
         </div>
 
-        <p className="mb-5 text-[11px] text-neutral-500">
+        <p className="mb-5 text-[11px] text-neutral-500 border-t border-neutral-900 pt-3">
           Changes apply going forward only. Days you've already logged keep their original points.
         </p>
 
@@ -1480,9 +1525,22 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
             onChange(local);
             onClose();
           }}
-          className="w-full rounded-xl bg-teal-400 py-2.5 text-sm font-semibold text-neutral-950 transition-transform active:scale-[0.98]"
+          className="w-full rounded-xl bg-teal-400 py-2.5 text-sm font-semibold text-neutral-950 transition-transform active:scale-[0.98] mb-3"
         >
           Save changes
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm("Are you sure you want to reset all daily records, streak progress, shop items, checkpoints and spendable currency? This cannot be undone.")) {
+              onResetAllData();
+              onClose();
+            }
+          }}
+          className="w-full rounded-xl border border-rose-500/40 bg-rose-950/20 py-2.5 text-xs font-semibold text-rose-400 hover:bg-rose-950/45 active:scale-[0.98] transition-all"
+        >
+          Reset Console & Start Fresh
         </button>
       </div>
     </div>
@@ -1508,8 +1566,17 @@ export default function GrindOps() {
   const [confettiTick, setConfettiTick] = useState(0);
   const [toast, setToast] = useState(null);
   const [levelUp, setLevelUp] = useState(null);
+  const [floats, setFloats] = useState([]);
   const shownMilestoneRef = useRef(null);
   const toastTimerRef = useRef(null);
+
+  const triggerFloat = (text, sub) => {
+    const id = Date.now() + Math.random();
+    setFloats((f) => [...f, { id, text, sub }]);
+    setTimeout(() => {
+      setFloats((f) => f.filter((item) => item.id !== id));
+    }, 1500);
+  };
 
   const sound = useSound(settings.soundOn);
 
@@ -1579,6 +1646,13 @@ export default function GrindOps() {
     setDays(newDays);
     persist(newDays, settings, rewards);
 
+    if (newTotal > prevTotal) {
+      const phrases = ["DISCIPLINE UNLOCKED!", "UNSTOPPABLE!", "DOPAMINE BURST!", "KEEP GRINDING!", "FOCUS ACTIVE!", "PURE EFFORT!", "BEAST MODE!"];
+      const sub = phrases[Math.floor(Math.random() * phrases.length)];
+      triggerFloat(`+${newTotal - prevTotal} PTS`, sub);
+      fireConfetti();
+    }
+
     if (!prevDay.perfectDay && recalced.perfectDay) {
       sound.fanfare();
       fireConfetti();
@@ -1612,11 +1686,16 @@ export default function GrindOps() {
     applyDayUpdate(updated);
   };
 
-  const setMetric = (field, value) => {
+  const confirmMetricTask = (taskKey, metricField, isChecked, metricValue) => {
     const cur = days[todayKey] || blankDay();
-    const updated = { ...cur, [field]: Math.max(0, value) };
+    const updated = {
+      ...cur,
+      [taskKey]: isChecked,
+      [metricField]: isChecked ? Math.max(0, metricValue) : 0
+    };
     applyDayUpdate(updated);
-    if (value > 0) sound.success();
+    if (isChecked) sound.success();
+    else sound.undo();
   };
 
   const selectVideoStage = (taskKey, field, value) => {
@@ -1655,6 +1734,7 @@ export default function GrindOps() {
     sound.fanfare();
     fireConfetti();
     const r = rewards.find((r) => r.id === id);
+    triggerFloat("REWARD CLAIMED!", r?.text);
     fireToast(`🏆 Claimed: ${r?.text || "reward"}`);
   };
 
@@ -1697,6 +1777,7 @@ export default function GrindOps() {
     
     sound.purchase();
     fireConfetti();
+    triggerFloat("LOOT REDEEMED!", item.text);
     setAcquiredItem(item);
   };
 
@@ -1722,6 +1803,20 @@ export default function GrindOps() {
     persist(days, settings, rewards, spentPoints, nextItems, purchaseHistory);
     sound.undo();
     fireToast("Removed item from dispensary");
+  };
+
+  const resetAllData = () => {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch (e) {}
+    setDays({});
+    setSettings(DEFAULT_SETTINGS);
+    setRewards(DEFAULT_REWARDS);
+    setSpentPoints(0);
+    setShopItems(DEFAULT_SHOP_ITEMS);
+    setPurchaseHistory([]);
+    sound.fail();
+    fireToast("Console reset successfully! Starting fresh.");
   };
 
   if (loading) {
@@ -1765,11 +1860,35 @@ export default function GrindOps() {
           50% { transform: scale(1.08) rotate(-2deg); }
         }
         .flame-flicker { animation: flame-flicker 1.6s ease-in-out infinite; }
+        @keyframes float-up-fade {
+          0% { transform: translate(-50%, -40%) scale(0.85); opacity: 0; }
+          15% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+          100% { transform: translate(-50%, -135%) scale(1); opacity: 0; }
+        }
       `}</style>
 
       <ConfettiBurst key={confettiTick} active={confettiTick > 0} />
       <Toast toast={toast} />
       <LevelUpFlash data={levelUp} />
+
+      {/* FLOATING TEXT CONTAINER */}
+      <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
+        {floats.map((f) => (
+          <div
+            key={f.id}
+            className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center animate-[float-up-fade_1.5s_ease-out_forwards] pointer-events-none"
+          >
+            <span className="font-display text-3xl font-extrabold tracking-wider text-amber-400 drop-shadow-[0_0_20px_rgba(251,191,36,0.95)] sm:text-4xl">
+              {f.text}
+            </span>
+            {f.sub && (
+              <span className="font-mono text-[10px] uppercase tracking-[0.25em] text-teal-300 drop-shadow-[0_0_12px_rgba(45,212,191,0.85)] sm:text-xs">
+                {f.sub}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
 
       {/* LOOT ACQUIRED DOPAMINE POPUP */}
       {acquiredItem && (
@@ -1886,8 +2005,8 @@ export default function GrindOps() {
                     day={today}
                     points={{ settings }}
                     onToggle={toggleTask}
-                    onMetricChange={setMetric}
                     onTierSelect={selectVideoStage}
+                    onMetricConfirm={confirmMetricTask}
                   />
                 ))}
               </div>
@@ -1991,34 +2110,40 @@ export default function GrindOps() {
 
       {/* FIXED BOTTOM NAVIGATION BAR */}
       <div className="fixed bottom-6 inset-x-0 z-50 flex justify-center px-4">
-        <div className="flex items-center gap-6 rounded-full border border-neutral-800 bg-neutral-950/90 px-6 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md">
+        <div className="flex items-center gap-4 rounded-full border border-neutral-800 bg-neutral-950/90 px-4 py-2.5 shadow-[0_8px_32px_rgba(0,0,0,0.7)] backdrop-blur-md sm:gap-6 sm:px-6 sm:py-3">
           <button
             onClick={() => {
               setActiveTab("console");
               sound.tick();
             }}
-            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 ${
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 sm:gap-2 sm:px-4 sm:text-xs ${
               activeTab === "console"
                 ? "bg-gradient-to-r from-teal-400 to-violet-500 text-neutral-950 shadow-[0_0_15px_rgba(45,212,191,0.4)]"
                 : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
-            <Compass className="h-4 w-4" />
+            <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             Console
           </button>
           
+          {/* Persistent points divider */}
+          <div className="flex flex-col items-center justify-center border-l border-r border-neutral-800 px-2 sm:px-4">
+            <span className="font-mono text-xs font-black text-amber-400 sm:text-sm animate-[pulse_2s_infinite]">{total}</span>
+            <span className="font-mono text-[7px] uppercase tracking-wider text-neutral-500 sm:text-[9px]">PTS</span>
+          </div>
+
           <button
             onClick={() => {
               setActiveTab("dispensary");
               sound.tick();
             }}
-            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 ${
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 sm:gap-2 sm:px-4 sm:text-xs ${
               activeTab === "dispensary"
                 ? "bg-gradient-to-r from-amber-400 to-rose-500 text-neutral-950 shadow-[0_0_15px_rgba(245,158,11,0.4)]"
                 : "text-neutral-400 hover:text-neutral-200"
             }`}
           >
-            <ShoppingBag className="h-4 w-4" />
+            <ShoppingBag className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             Dispensary
           </button>
         </div>
@@ -2031,6 +2156,8 @@ export default function GrindOps() {
         onSoundToggle={toggleSound}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        onResetAllData={resetAllData}
+        totalPoints={total}
       />
     </div>
   );
