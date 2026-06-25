@@ -463,7 +463,17 @@ function useSound(enabled) {
     blip("F#3", "4n", 0.06);
   }, [blip]);
 
-  return { tick, success, fanfare, undo, purchase, fail };
+  const levelup = useCallback(() => {
+    blip("C4", "16n", 0);
+    blip("E4", "16n", 0.08);
+    blip("G4", "16n", 0.16);
+    blip("C5", "16n", 0.24);
+    blip("E5", "16n", 0.32);
+    blip("G5", "16n", 0.40);
+    blip("C6", "4n", 0.48);
+  }, [blip]);
+
+  return { tick, success, fanfare, undo, purchase, fail, levelup };
 }
 
 /* ---------------------------------------------------------------
@@ -551,14 +561,39 @@ function Toast({ toast }) {
   );
 }
 
-function LevelUpFlash({ data }) {
+function LevelUpFlash({ data, onClose }) {
   if (!data) return null;
   return (
-    <div className="pointer-events-none fixed inset-0 z-[65] flex items-center justify-center bg-black/40">
-      <div className="levelup-pop flex flex-col items-center gap-2 rounded-2xl border border-amber-400/50 bg-neutral-950/95 px-8 py-6 text-center shadow-[0_0_60px_rgba(251,191,36,0.35)]">
-        <Sparkles className="h-8 w-8 text-amber-400" />
-        <div className="font-mono text-xs uppercase tracking-[0.3em] text-neutral-500">Level Up</div>
-        <div className="font-display text-2xl font-bold text-neutral-50">Lv.{data.level}: {data.title}</div>
+    <div className="fixed inset-0 z-[80] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md transition-all duration-500">
+      <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-amber-500/40 bg-neutral-950 p-8 text-center shadow-[0_0_60px_rgba(245,158,11,0.35)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
+        {/* Spinning halo effect */}
+        <div className="absolute inset-0 -z-10 animate-spin bg-[radial-gradient(circle_at_center,rgba(245,158,11,0.2),transparent_70%)] opacity-80" style={{ animationDuration: "10s" }} />
+
+        <span className="mb-4 flex h-20 w-20 items-center justify-center rounded-full border-2 border-amber-400 bg-amber-400/10 text-amber-400 shadow-[0_0_30px_rgba(245,158,11,0.5)] animate-bounce">
+          <Trophy className="h-10 w-10 text-amber-400" />
+        </span>
+
+        <div className="font-mono text-xs uppercase tracking-[0.3em] text-amber-500">grindops status update</div>
+        
+        <h2 className="mt-2 text-2xl font-extrabold text-neutral-100 tracking-tight">
+          LEVEL UP!
+        </h2>
+        
+        <div className="mt-3 flex items-center justify-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/5 px-4 py-1.5">
+          <Sparkles className="h-4 w-4 text-amber-400" />
+          <span className="font-mono text-sm font-semibold text-amber-400">Lv.{data.level} · {data.title}</span>
+        </div>
+
+        <p className="mt-4 max-w-xs font-mono text-[10px] text-neutral-400 leading-relaxed">
+          Your tier has been updated in the Grind system. New permissions, multiplier boosts, and status perks unlocked.
+        </p>
+
+        <button
+          onClick={onClose}
+          className="mt-8 w-full rounded-2xl bg-amber-400 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(245,158,11,0.3)] transition-all hover:scale-105 active:scale-95 cursor-pointer"
+        >
+          CLAIM NEW RANK & CONTINUE
+        </button>
       </div>
     </div>
   );
@@ -1645,7 +1680,7 @@ export default function GrindOps() {
 
     if (newLevel > prevLevel) {
       setLevelUp({ level: newLevel, title: levelInfo(newTotal).title });
-      setTimeout(() => setLevelUp(null), 2200);
+      sound.levelup();
       fireConfetti();
     }
 
@@ -1789,7 +1824,17 @@ export default function GrindOps() {
 
   const resetAllData = () => {
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          days: {},
+          settings: DEFAULT_SETTINGS,
+          rewards: DEFAULT_REWARDS,
+          spentPoints: 0,
+          shopItems: DEFAULT_SHOP_ITEMS,
+          purchaseHistory: []
+        })
+      );
     } catch (e) {}
     setDays({});
     setSettings(DEFAULT_SETTINGS);
@@ -1851,7 +1896,7 @@ export default function GrindOps() {
 
       <ConfettiBurst key={confettiTick} active={confettiTick > 0} />
       <Toast toast={toast} />
-      <LevelUpFlash data={levelUp} />
+      <LevelUpFlash data={levelUp} onClose={() => setLevelUp(null)} />
 
       {/* FLOATING TEXT CONTAINER */}
       <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden">
@@ -1954,11 +1999,18 @@ export default function GrindOps() {
                 <span>{lvl.into} / {LEVEL_STEP} to next level</span>
                 <span>{Math.round(lvl.pct)}%</span>
               </div>
-              <div className="h-1.5 w-full rounded-full bg-neutral-800">
+              <div className="relative h-1.5 w-full rounded-full bg-neutral-800">
                 <div
-                  className="h-1.5 rounded-full bg-gradient-to-r from-teal-400 via-violet-400 to-amber-400 transition-all duration-700"
+                  className="relative h-1.5 rounded-full bg-gradient-to-r from-teal-400 via-violet-400 to-amber-400 transition-all duration-700"
                   style={{ width: `${lvl.pct}%` }}
-                />
+                >
+                  {lvl.pct > 0 && (
+                    <span className="absolute -right-1 -top-[3px] flex h-3 w-3">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400 shadow-[0_0_10px_#fbbf24]"></span>
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
