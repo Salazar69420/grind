@@ -591,22 +591,37 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
   const Icon = def.icon;
   const hasMetric = !!def.metricField;
   const metricValueRaw = hasMetric ? day[def.metricField] || 0 : 0;
+  
+  // Local drafts for inputs
   const [metricInput, setMetricInput] = useState(metricValueRaw > 0 ? String(metricValueRaw) : "");
+  const stageField = def.stageField || "videoStage";
+  const savedStage = day[stageField] || "";
+  const [localStage, setLocalStage] = useState(savedStage);
+
+  // Sync local draft state with global state when selected day changes (e.g. via calendar)
+  useEffect(() => {
+    setMetricInput(metricValueRaw > 0 ? String(metricValueRaw) : "");
+  }, [metricValueRaw]);
+
+  useEffect(() => {
+    setLocalStage(savedStage);
+  }, [savedStage]);
 
   if (def.tierSelect) {
-    const stageField = def.stageField || "videoStage";
-    const tiers = points.settings[def.tierKey] || [];
-    const selectedTier = tiers.find((t) => t.id === day[stageField]);
+    const tiers = points.settings[def.tierKey] || DEFAULT_SETTINGS[def.tierKey] || [];
+    const selectedTier = tiers.find((t) => t.id === savedStage);
     const done = !!day[def.key];
+    const isDirty = localStage !== savedStage;
+
     return (
-      <div className={`rounded-xl border ${done ? c.border : "border-neutral-800"} bg-neutral-900/60 p-4`}>
+      <div className={`rounded-xl border ${done && !isDirty ? c.border : "border-neutral-800"} bg-neutral-900/60 p-4 transition-all duration-300`}>
         <div className="mb-3 flex items-center gap-3">
           <span
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
-              done ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
+              done && !isDirty ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
             }`}
           >
-            {done ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
+            {done && !isDirty ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
           </span>
           <span className="flex-1">
             <span className={`block text-sm font-medium ${done ? "text-neutral-100" : "text-neutral-300"}`}>
@@ -616,13 +631,16 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
           </span>
           {selectedTier && selectedTier.points > 0 && <span className={`font-mono text-xs ${c.text}`}>+{selectedTier.points}</span>}
         </div>
+        
         <div className="flex gap-2 flex-wrap">
           {tiers.map((t) => {
-            const active = day[stageField] === t.id;
+            const active = localStage === t.id;
             return (
               <button
                 key={t.id}
-                onClick={() => onTierSelect(def.key, stageField, active ? null : t.id)}
+                onClick={() => {
+                  setLocalStage(active ? "" : t.id);
+                }}
                 className={`flex-1 rounded-lg border px-2 py-2 text-center text-xs font-semibold tracking-wide transition-all min-w-[70px] ${
                   active ? `${c.borderSolid} ${c.bgSoft} ${c.text}` : "border-neutral-700 text-neutral-400 hover:border-neutral-600 hover:text-neutral-300"
                 }`}
@@ -633,6 +651,18 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
             );
           })}
         </div>
+
+        {/* CONFIRM BUTTON FOR WAKING/TIER SELECTS */}
+        {isDirty && (
+          <button
+            onClick={() => {
+              onTierSelect(def.key, stageField, localStage || null);
+            }}
+            className={`w-full mt-3 rounded-lg ${c.bg} text-neutral-950 py-2 text-center text-xs font-extrabold uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all duration-200 animate-pulse`}
+          >
+            Confirm {def.label}
+          </button>
+        )}
       </div>
     );
   }
@@ -640,19 +670,20 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
   const done = !!day[def.key];
   const metricValue = metricValueRaw;
   const bonusInfo = hasMetric && done && metricValue > 0 ? def.calcBonus(metricValue, points.settings) : { points: 0, tierLabel: null };
+  const isMetricDirty = hasMetric && String(metricValue) !== metricInput;
 
   return (
-    <div className={`rounded-xl border ${done ? c.border : "border-neutral-800"} bg-neutral-900/60 transition-colors`}>
+    <div className={`rounded-xl border ${done && !isMetricDirty ? c.border : "border-neutral-800"} bg-neutral-900/60 transition-colors`}>
       <button
         onClick={() => onToggle(def.key)}
         className="flex w-full items-center gap-3 px-4 py-3 text-left"
       >
         <span
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 transition-all ${
-            done ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
+            done && !isMetricDirty ? `${c.borderSolid} ${c.bgSoft} ${c.shadow}` : "border-neutral-700 bg-neutral-800/60"
           }`}
         >
-          {done ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
+          {done && !isMetricDirty ? <Check className={`h-4 w-4 ${c.text}`} /> : <Icon className="h-4 w-4 text-neutral-500" />}
         </span>
         <span className="flex-1">
           <span className={`block text-sm font-medium ${done ? "text-neutral-100" : "text-neutral-300"}`}>
@@ -675,8 +706,8 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
       </button>
 
       {hasMetric && done && (
-        <div className="border-t border-neutral-800/80 px-4 py-3">
-          <div className="mb-2 flex items-center gap-2">
+        <div className="border-t border-neutral-800/80 px-4 py-3 space-y-3">
+          <div className="flex items-center gap-2">
             <input
               type="number"
               min="0"
@@ -684,12 +715,24 @@ function TaskRow({ def, day, points, onToggle, onMetricChange, onTierSelect }) {
               inputMode={def.metricInputMode}
               value={metricInput}
               onChange={(e) => setMetricInput(e.target.value)}
-              onBlur={() => onMetricChange(def.metricField, parseFloat(metricInput) || 0)}
               placeholder={def.metricPlaceholder}
               className={`w-32 rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100 outline-none ${c.focusBorder}`}
             />
             <span className="text-xs text-neutral-500 font-medium">{def.metricHint}</span>
           </div>
+
+          {/* CONFIRM BUTTON FOR METRIC VALUES */}
+          {isMetricDirty && (
+            <button
+              onClick={() => {
+                onMetricChange(def.metricField, parseFloat(metricInput) || 0);
+              }}
+              className={`w-full rounded-lg ${c.bg} text-neutral-950 py-2 text-center text-xs font-extrabold uppercase tracking-wider shadow-md hover:scale-[1.02] active:scale-95 transition-all duration-200 animate-pulse`}
+            >
+              Confirm {def.metricPlaceholder || "Value"}
+            </button>
+          )}
+
           {def.tierKey && (
             <TierLadder
               value={metricValue}
