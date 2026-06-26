@@ -44,6 +44,9 @@ import {
   Medal,
   Ghost,
   Swords,
+  Share2,
+  Bell,
+  BellOff,
 } from "lucide-react";
 import * as Tone from "tone";
 
@@ -295,6 +298,33 @@ function buildLeaderboard(userPoints, wk) {
   return board;
 }
 
+// Daily Spin — the purest craving machine (variable-ratio Skinner box). Once/day.
+const SPIN_SEGMENTS = [
+  { id: "p15", weight: 26, kind: "points", amount: 15, label: "15 pts", tone: "teal" },
+  { id: "p30", weight: 22, kind: "points", amount: 30, label: "30 pts", tone: "teal" },
+  { id: "shield", weight: 14, kind: "shield", amount: 1, label: "🛡️ Shield", tone: "sky" },
+  { id: "p60", weight: 13, kind: "points", amount: 60, label: "60 pts", tone: "amber" },
+  { id: "box", weight: 11, kind: "box", amount: 1, label: "📦 Box", tone: "violet" },
+  { id: "p100", weight: 8, kind: "points", amount: 100, label: "100 pts", tone: "amber" },
+  { id: "bust", weight: 4, kind: "points", amount: 5, label: "Almost!", tone: "rose" },
+  { id: "jackpot", weight: 2, kind: "points", amount: 300, label: "💰 JACKPOT", tone: "rose" },
+];
+
+// Equippable flair/titles — status cosmetics unlocked by milestones (League playbook).
+const FLAIRS = [
+  { id: "rookie", label: "Rookie", emoji: "🌱", test: () => true },
+  { id: "streaker", label: "Streaker", emoji: "🔥", test: (c) => c.longestStreak >= 7 },
+  { id: "ironwill", label: "Iron Will", emoji: "🛡️", test: (c) => c.longestStreak >= 30 },
+  { id: "highroller", label: "High Roller", emoji: "🎰", test: (c) => c.maxCrit >= 5 },
+  { id: "machine", label: "The Machine", emoji: "🤖", test: (c) => c.perfectDays >= 25 },
+  { id: "whale", label: "Whale", emoji: "🐋", test: (c) => c.total >= 5000 },
+  { id: "ascendant", label: "Ascendant", emoji: "👑", test: (c) => c.prestige >= 1 },
+  { id: "legend", label: "Legend", emoji: "⭐", test: (c) => c.level >= 8 },
+];
+function flairUnlocked(flair, ctx) {
+  return flair.test(ctx);
+}
+
 const TASK_DEFS = [
   {
     key: "wake",
@@ -438,6 +468,7 @@ const DEFAULT_SETTINGS = {
   ],
   bonusPoints: { interview: 10, bath: 10 },
   soundOn: true,
+  notifyOn: false,
 };
 
 const DEFAULT_REWARDS = [
@@ -991,6 +1022,201 @@ function EvolveModal({ data, onClose }) {
         >
           Incredible
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   DAILY SPIN — variable-ratio slot machine (once per day)
+--------------------------------------------------------------- */
+
+const SPIN_REEL = Array.from({ length: 8 }, () => SPIN_SEGMENTS).flat();
+const SPIN_ITEM_H = 60;
+const SPIN_VISIBLE = 5;
+
+function SpinWheel({ open, onClose, onResult }) {
+  const [phase, setPhase] = useState("idle"); // idle | spin | done
+  const [ty, setTy] = useState(0);
+  const [won, setWon] = useState(null);
+
+  useEffect(() => {
+    if (open) { setPhase("idle"); setTy(0); setWon(null); }
+  }, [open]);
+
+  if (!open) return null;
+
+  const spin = () => {
+    if (phase !== "idle") return;
+    const seg = rollWeighted(SPIN_SEGMENTS);
+    const idx = SPIN_SEGMENTS.findIndex((s) => s.id === seg.id);
+    const winPos = 6 * SPIN_SEGMENTS.length + idx;
+    const target = -(winPos * SPIN_ITEM_H - Math.floor(SPIN_VISIBLE / 2) * SPIN_ITEM_H);
+    setWon(seg);
+    setPhase("spin");
+    requestAnimationFrame(() => requestAnimationFrame(() => setTy(target)));
+  };
+
+  const handleEnd = () => {
+    if (phase === "spin") { setPhase("done"); onResult(won); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[86] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+      <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-amber-500/50 bg-neutral-950 p-7 text-center shadow-[0_0_70px_rgba(245,158,11,0.3)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
+        <div className="font-mono text-[10px] uppercase tracking-[0.35em] text-amber-400">daily spin</div>
+        <h2 className="mt-1 mb-4 text-xl font-extrabold tracking-tight text-neutral-50">Pull the lever</h2>
+
+        {/* reel viewport */}
+        <div className="relative w-44 overflow-hidden rounded-2xl border border-neutral-700 bg-black/60" style={{ height: SPIN_VISIBLE * SPIN_ITEM_H }}>
+          <div className="pointer-events-none absolute inset-x-0 top-1/2 z-10 -translate-y-1/2 border-y-2 border-amber-400/70 bg-amber-400/5" style={{ height: SPIN_ITEM_H }} />
+          <div className="pointer-events-none absolute inset-0 z-20" style={{ background: "linear-gradient(180deg, rgba(10,12,15,0.95), transparent 30%, transparent 70%, rgba(10,12,15,0.95))" }} />
+          <div
+            style={{ transform: `translateY(${ty}px)`, transition: phase === "spin" ? "transform 4.2s cubic-bezier(.16,1,.3,1)" : "none" }}
+            onTransitionEnd={handleEnd}
+          >
+            {SPIN_REEL.map((s, i) => {
+              const tc = COLOR_MAP[s.tone] || COLOR_MAP.amber;
+              return (
+                <div key={i} className="flex items-center justify-center font-display text-base font-bold" style={{ height: SPIN_ITEM_H }}>
+                  <span className={tc.text}>{s.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {phase === "done" ? (
+          <button onClick={onClose} className="mt-5 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(245,158,11,0.4)] transition-all hover:scale-105 active:scale-95">
+            Collect {won?.label}
+          </button>
+        ) : (
+          <button
+            onClick={spin}
+            disabled={phase === "spin"}
+            className="mt-5 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(245,158,11,0.4)] transition-all hover:scale-105 active:scale-95 disabled:opacity-60"
+          >
+            {phase === "spin" ? "Spinning…" : "SPIN"}
+          </button>
+        )}
+        <p className="mt-3 font-mono text-[9px] text-neutral-600">One free pull every day. Come back tomorrow for another.</p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   SHAREABLE RANK CARD — turns progress into public identity
+--------------------------------------------------------------- */
+
+function drawRankCard(canvas, d) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  // background
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  g.addColorStop(0, "#0a0c0f"); g.addColorStop(1, "#13161c");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // glow accents
+  const r1 = ctx.createRadialGradient(W * 0.2, H * 0.1, 0, W * 0.2, H * 0.1, W * 0.7);
+  r1.addColorStop(0, "rgba(45,212,191,0.18)"); r1.addColorStop(1, "transparent");
+  ctx.fillStyle = r1; ctx.fillRect(0, 0, W, H);
+  const r2 = ctx.createRadialGradient(W * 0.9, H, 0, W * 0.9, H, W * 0.7);
+  r2.addColorStop(0, "rgba(167,139,250,0.16)"); r2.addColorStop(1, "transparent");
+  ctx.fillStyle = r2; ctx.fillRect(0, 0, W, H);
+  // border
+  ctx.strokeStyle = "rgba(245,158,11,0.5)"; ctx.lineWidth = 6;
+  ctx.strokeRect(24, 24, W - 48, H - 48);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#737373";
+  ctx.font = "600 32px 'JetBrains Mono', monospace";
+  ctx.fillText("GRIND OPS // STATUS CARD", W / 2, 130);
+
+  ctx.fillStyle = "#fafafa";
+  ctx.font = "800 92px 'Space Grotesk', system-ui, sans-serif";
+  ctx.fillText(`${d.flair ? d.flair + " " : ""}${d.title}`, W / 2, 250);
+
+  ctx.fillStyle = "#fbbf24";
+  ctx.font = "700 48px 'JetBrains Mono', monospace";
+  ctx.fillText(`LEVEL ${d.level}${d.prestige > 0 ? `  ★${d.prestige}` : ""}`, W / 2, 330);
+
+  // GRT line
+  ctx.fillStyle = "#a78bfa";
+  ctx.font = "600 36px 'JetBrains Mono', monospace";
+  ctx.fillText(`Companion: GRT · ${d.grtStage}`, W / 2, 410);
+
+  // big stat tiles
+  const tiles = [
+    { label: "TOTAL POINTS", value: String(d.total), color: "#fbbf24" },
+    { label: "CURRENT STREAK", value: `${d.streak}d`, color: "#fb7185" },
+    { label: "ARENA RANK", value: `#${d.rank}`, color: "#2dd4bf" },
+    { label: "SEASON", value: `${d.wins}W-${d.losses}L`, color: "#a78bfa" },
+  ];
+  const tileW = (W - 48 * 2 - 40) / 2, tileH = 200, startX = 48, startY = 480;
+  tiles.forEach((t, i) => {
+    const x = startX + (i % 2) * (tileW + 40);
+    const y = startY + Math.floor(i / 2) * (tileH + 40);
+    ctx.fillStyle = "rgba(255,255,255,0.03)";
+    ctx.strokeStyle = "rgba(255,255,255,0.1)"; ctx.lineWidth = 2;
+    roundRect(ctx, x, y, tileW, tileH, 24); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = t.color;
+    ctx.font = "800 84px 'Space Grotesk', system-ui, sans-serif";
+    ctx.fillText(t.value, x + tileW / 2, y + 110);
+    ctx.fillStyle = "#737373";
+    ctx.font = "600 26px 'JetBrains Mono', monospace";
+    ctx.fillText(t.label, x + tileW / 2, y + 160);
+  });
+
+  ctx.fillStyle = "#525252";
+  ctx.font = "500 28px 'JetBrains Mono', monospace";
+  ctx.fillText("Can you out-grind me?", W / 2, H - 70);
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function RankCardModal({ open, onClose, data, onShared }) {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    if (open && canvasRef.current) {
+      // slight delay so fonts are ready
+      const id = setTimeout(() => canvasRef.current && drawRankCard(canvasRef.current, data), 60);
+      return () => clearTimeout(id);
+    }
+  }, [open, data]);
+  if (!open) return null;
+  const share = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const file = new File([blob], "grindops-rank.png", { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: "My GrindOps rank" }); onShared && onShared(); return; } catch (e) { /* cancelled */ }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = "grindops-rank.png"; a.click();
+      URL.revokeObjectURL(url);
+      onShared && onShared();
+    }, "image/png");
+  };
+  return (
+    <div className="fixed inset-0 z-[86] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md" onClick={onClose}>
+      <div className="flex w-full max-w-sm flex-col items-center" onClick={(e) => e.stopPropagation()}>
+        <canvas ref={canvasRef} width={1080} height={1350} className="w-full max-w-[300px] rounded-2xl border border-neutral-700 shadow-[0_0_50px_rgba(245,158,11,0.2)]" />
+        <div className="mt-4 flex w-full max-w-[300px] gap-2">
+          <button onClick={share} className="flex-1 rounded-2xl bg-gradient-to-r from-amber-400 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 transition-all hover:scale-105 active:scale-95">
+            Share / Save
+          </button>
+          <button onClick={onClose} className="rounded-2xl border border-neutral-700 px-4 py-3 text-sm font-bold text-neutral-300">Close</button>
+        </div>
       </div>
     </div>
   );
@@ -1854,10 +2080,41 @@ function getRelativeTime(isoString) {
    ARENA — invisible scoreboard, lifetime stats, GRT profile, prestige
 --------------------------------------------------------------- */
 
-function ArenaView({ board, userRank, nextGap, nextName, wins, losses, pastSelf, lifetime, grtStage, traits, prestige, level, canPrestige, prestigeAtLevel, onPrestige, bestDiamonds }) {
+function ArenaView({ board, userRank, nextGap, nextName, wins, losses, pastSelf, lifetime, grtStage, traits, prestige, level, canPrestige, prestigeAtLevel, onPrestige, bestDiamonds, onShareRank, flairOptions, equippedFlair, onEquipFlair }) {
   const allTraits = [...GRT_TRAITS, COMBO_TRAIT];
   return (
     <div className="space-y-7">
+      {/* SHARE RANK + FLAIR */}
+      <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
+        <button
+          onClick={onShareRank}
+          className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-rose-500 py-2.5 text-sm font-extrabold uppercase tracking-widest text-neutral-950 transition-all hover:scale-[1.02] active:scale-95"
+        >
+          <Share2 className="h-4 w-4" /> Share my rank card
+        </button>
+        <div className="mt-3">
+          <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-500">Equip a flair</div>
+          <div className="flex flex-wrap gap-1.5">
+            {flairOptions.map((f) => (
+              <button
+                key={f.id}
+                disabled={!f.unlocked}
+                onClick={() => onEquipFlair(f.id)}
+                title={f.unlocked ? f.label : "Locked — keep grinding"}
+                className={`rounded-full border px-2.5 py-1 font-mono text-[10px] transition-all ${
+                  equippedFlair === f.id
+                    ? "border-amber-400 bg-amber-400/15 text-amber-300"
+                    : f.unlocked
+                    ? "border-neutral-700 text-neutral-300 hover:border-neutral-500"
+                    : "border-neutral-800 text-neutral-600 opacity-50"
+                }`}
+              >
+                {f.unlocked ? `${f.emoji} ${f.label}` : `🔒 ${f.label}`}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
       {/* WEEKLY ARENA / LEADERBOARD */}
       <div>
         <div className="mb-2.5 flex items-center justify-between">
@@ -2006,7 +2263,7 @@ function ArenaView({ board, userRank, nextGap, nextName, wins, losses, pastSelf,
    SETTINGS DRAWER
 --------------------------------------------------------------- */
 
-function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onClose, onResetAllData, totalPoints }) {
+function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, notifyOn, onNotifyToggle, open, onClose, onResetAllData, totalPoints }) {
   const [local, setLocal] = useState(settings);
 
   useEffect(() => setLocal(settings), [settings, open]);
@@ -2041,10 +2298,20 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
           </button>
         </div>
 
-        <div className="mb-5 flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2.5">
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2.5">
           <span className="text-sm text-neutral-300">Sound effects</span>
           <button onClick={onSoundToggle} className="text-neutral-300">
             {soundOn ? <Volume2 className="h-4 w-4 text-teal-400" /> : <VolumeX className="h-4 w-4 text-neutral-600" />}
+          </button>
+        </div>
+
+        <div className="mb-5 flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2.5">
+          <div>
+            <span className="text-sm text-neutral-300">Daily reminders</span>
+            <p className="font-mono text-[9px] text-neutral-500">Get nudged before your streak dies</p>
+          </div>
+          <button onClick={onNotifyToggle} className="text-neutral-300">
+            {notifyOn ? <Bell className="h-4 w-4 text-teal-400" /> : <BellOff className="h-4 w-4 text-neutral-600" />}
           </button>
         </div>
 
@@ -2353,6 +2620,10 @@ export default function GrindOps() {
   const [revealedTraits, setRevealedTraits] = useState([]);
   const [grtStageSeen, setGrtStageSeen] = useState(0);
   const [evolveModal, setEvolveModal] = useState(null);
+  const [lastSpinDate, setLastSpinDate] = useState(null);
+  const [equippedFlair, setEquippedFlair] = useState(null);
+  const [spinOpen, setSpinOpen] = useState(false);
+  const [rankCardOpen, setRankCardOpen] = useState(false);
   const shownMilestoneRef = useRef(null);
   const toastTimerRef = useRef(null);
   const checkInDoneRef = useRef(false);
@@ -2397,6 +2668,8 @@ export default function GrindOps() {
         setLeague(parsed.league || { wins: 0, losses: 0, lastSettledWeek: null });
         setRevealedTraits(parsed.revealedTraits || []);
         setGrtStageSeen(parsed.grtStageSeen || 0);
+        setLastSpinDate(parsed.lastSpinDate || null);
+        setEquippedFlair(parsed.equippedFlair || null);
       }
     } catch (e) {
       // no saved data yet, or it was corrupted, so defaults already in state
@@ -2431,12 +2704,14 @@ export default function GrindOps() {
           league,
           revealedTraits,
           grtStageSeen,
+          lastSpinDate,
+          equippedFlair,
         })
       );
     } catch (e) {
       /* storage unavailable or full, fail silently */
     }
-  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, claimedBounties, seenOnboarding, stats, pendingBoxes, prestige, league, revealedTraits, grtStageSeen]);
+  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, claimedBounties, seenOnboarding, stats, pendingBoxes, prestige, league, revealedTraits, grtStageSeen, lastSpinDate, equippedFlair]);
 
   const fireToast = (msg) => {
     setToast(msg);
@@ -2497,6 +2772,12 @@ export default function GrindOps() {
     bestStreak: longestStreak,
     boxes: stats.boxesOpened,
   };
+  // spin + flair
+  const realTodayKeyForSpin = fmtDateKey(new Date());
+  const spinAvailable = lastSpinDate !== realTodayKeyForSpin;
+  const flairCtx = { level: lvl.level, longestStreak, prestige, perfectDays: perfectDaysCount, total, maxCrit: stats.maxCrit };
+  const availableFlairs = FLAIRS.filter((f) => flairUnlocked(f, flairCtx));
+  const equippedFlairObj = FLAIRS.find((f) => f.id === equippedFlair) || null;
 
   const applyDayUpdate = (updatedToday) => {
     const recalced = recalcDay(updatedToday, settings);
@@ -2715,6 +2996,10 @@ export default function GrindOps() {
     setRevealedTraits([]);
     setGrtStageSeen(0);
     setEvolveModal(null);
+    setLastSpinDate(null);
+    setEquippedFlair(null);
+    setSpinOpen(false);
+    setRankCardOpen(false);
     checkInDoneRef.current = false;
     shownMilestoneRef.current = null;
     leagueSettledRef.current = false;
@@ -2864,6 +3149,50 @@ export default function GrindOps() {
     fireToast(`⭐ Ascended to Prestige ${next} — permanent +${next * 10}% bonus`);
   };
 
+  const openSpin = () => {
+    if (!spinAvailable) { fireToast("⏳ You've spun today. Come back tomorrow."); return; }
+    setSpinOpen(true);
+    sound.tick();
+  };
+
+  const handleSpinResult = (seg) => {
+    setLastSpinDate(fmtDateKey(new Date()));
+    if (seg.kind === "points") addBonus(seg.amount, `+${seg.amount} PTS`, "DAILY SPIN");
+    else if (seg.kind === "shield") { setShields((x) => x + seg.amount); triggerFloat(`+${seg.amount} 🛡️`, "DAILY SPIN"); }
+    else if (seg.kind === "box") { setPendingBoxes((n) => n + seg.amount); triggerFloat(`+${seg.amount} 📦`, "DAILY SPIN"); }
+    sound.purchase();
+    fireConfetti();
+    if (seg.id === "jackpot") { fireFlash(); reactMascot("hyped", "JACKPOT?! The machine loves you today 🎰"); }
+    else reactMascot("cheer", "Free pull, free reward. See you tomorrow. 😏");
+  };
+
+  const equipFlair = (id) => {
+    setEquippedFlair((cur) => (cur === id ? null : id));
+    sound.success();
+  };
+
+  const toggleNotify = () => {
+    const turningOn = !settings.notifyOn;
+    if (turningOn && typeof Notification !== "undefined") {
+      try {
+        Notification.requestPermission().then((perm) => {
+          if (perm === "granted") {
+            setSettings((s) => ({ ...s, notifyOn: true }));
+            fireToast("🔔 Daily reminders on");
+            try { new Notification("GrindOps", { body: "Reminders on. I'll keep your streak alive. 🔥" }); } catch (e) {}
+          } else {
+            fireToast("Notifications blocked in your browser");
+          }
+        });
+      } catch (e) {
+        fireToast("Notifications not supported here");
+      }
+    } else {
+      setSettings((s) => ({ ...s, notifyOn: false }));
+      fireToast("Reminders off");
+    }
+  };
+
   const claimCheckIn = () => {
     const m = checkInModal;
     if (!m) return;
@@ -2966,6 +3295,23 @@ export default function GrindOps() {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [streakAtRisk, urgentRisk, currentStreak]);
 
+  // opt-in reminder: fire a notification when the streak is about to die (once/day)
+  const notifiedRef = useRef(null);
+  useEffect(() => {
+    if (loading || !settings.notifyOn) return;
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const dayK = fmtDateKey(new Date());
+    if (urgentRisk && notifiedRef.current !== dayK) {
+      notifiedRef.current = dayK;
+      try {
+        new Notification("🔥 Your streak is about to die", {
+          body: `${hoursLeft}h ${minsLeft}m left to keep your ${currentStreak}-day streak. Don't lose it.`,
+          tag: "grindops-streak",
+        });
+      } catch (e) {}
+    }
+  }, [loading, settings.notifyOn, urgentRisk, hoursLeft, minsLeft, currentStreak]);
+
   // ambient mascot mood/line derived from current state (overridden by reactions)
   const ambientMascot = (() => {
     const tDone = TASK_DEFS.filter((d) => realToday[d.key]).length;
@@ -3062,6 +3408,28 @@ export default function GrindOps() {
       {/* GRT EVOLUTION */}
       <EvolveModal data={evolveModal} onClose={() => setEvolveModal(null)} />
 
+      {/* DAILY SPIN */}
+      <SpinWheel open={spinOpen} onClose={() => setSpinOpen(false)} onResult={handleSpinResult} />
+
+      {/* SHAREABLE RANK CARD */}
+      <RankCardModal
+        open={rankCardOpen}
+        onClose={() => setRankCardOpen(false)}
+        onShared={() => reactMascot("cheer", "Put it on the timeline. Let them see. 😎")}
+        data={{
+          level: lvl.level,
+          title: lvl.title,
+          prestige,
+          streak: currentStreak,
+          total,
+          grtStage: grtStage.name,
+          rank: userRank,
+          wins: league.wins,
+          losses: league.losses,
+          flair: equippedFlairObj ? equippedFlairObj.emoji : "",
+        }}
+      />
+
       {/* MYSTERY BOX */}
       <MysteryBoxModal
         open={!!boxState}
@@ -3154,7 +3522,9 @@ export default function GrindOps() {
           <div>
             <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-neutral-500">grind ops // personal console</div>
             <h1 className="font-display text-xl font-bold text-neutral-50">
+              {equippedFlairObj && <span className="mr-1">{equippedFlairObj.emoji}</span>}
               Lv.{lvl.level} <span className="text-neutral-500">·</span> {lvl.title}
+              {prestige > 0 && <span className="ml-1 text-amber-400">★{prestige}</span>}
             </h1>
           </div>
           <button
@@ -3281,6 +3651,29 @@ export default function GrindOps() {
                 </div>
               </div>
             )}
+
+            {/* DAILY SPIN */}
+            <button
+              onClick={openSpin}
+              className={`mb-5 flex w-full items-center gap-3 rounded-2xl border p-4 text-left transition-all ${
+                spinAvailable
+                  ? "border-amber-400/60 bg-gradient-to-r from-amber-400/10 to-rose-500/10 shadow-[0_0_24px_rgba(245,158,11,0.18)] hover:scale-[1.01] active:scale-[0.99]"
+                  : "border-neutral-800 bg-neutral-900/30"
+              }`}
+            >
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 ${spinAvailable ? "border-amber-400 bg-amber-400/10 text-amber-400" : "border-neutral-700 text-neutral-600"}`}>
+                <Sparkles className={`h-5 w-5 ${spinAvailable ? "animate-pulse" : ""}`} />
+              </span>
+              <div className="flex-1">
+                <div className="font-display text-base font-bold text-neutral-50">Daily Spin</div>
+                <div className="font-mono text-[11px] text-neutral-400">
+                  {spinAvailable ? "Your free pull is ready — tap to spin 🎰" : "Spun today · resets at midnight"}
+                </div>
+              </div>
+              {spinAvailable && (
+                <span className="rounded-full bg-amber-400 px-3 py-1 font-mono text-[10px] font-extrabold uppercase tracking-wider text-neutral-950">Spin</span>
+              )}
+            </button>
 
             {/* DAILY BOUNTY */}
             <div
@@ -3492,6 +3885,10 @@ export default function GrindOps() {
             prestigeAtLevel={prestigeAtLevel}
             onPrestige={doPrestige}
             bestDiamonds={bestDiamonds}
+            onShareRank={() => { setRankCardOpen(true); sound.tick(); }}
+            flairOptions={FLAIRS.map((f) => ({ ...f, unlocked: flairUnlocked(f, flairCtx) }))}
+            equippedFlair={equippedFlair}
+            onEquipFlair={equipFlair}
           />
         ) : (
           <DispensaryView
@@ -3570,6 +3967,8 @@ export default function GrindOps() {
         onChange={updateSettings}
         soundOn={settings.soundOn}
         onSoundToggle={toggleSound}
+        notifyOn={!!settings.notifyOn}
+        onNotifyToggle={toggleNotify}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onResetAllData={resetAllData}

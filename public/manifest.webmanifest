@@ -1,0 +1,14 @@
+{
+  "name": "GrindOps",
+  "short_name": "GrindOps",
+  "description": "Your personal grind console — streaks, levels, rewards.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0c0f",
+  "theme_color": "#0a0c0f",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
