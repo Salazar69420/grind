@@ -176,6 +176,36 @@ const ACHIEVEMENTS = [
   { id: "shielded", label: "Saved By The Bell", desc: "Survive on a streak shield", icon: Shield, reward: 50, hidden: true, test: (s) => s.shieldsUsed >= 1 },
 ];
 
+// Streak multiplier — points scale with streak length. The streak becomes an
+// asset you can lose (loss aversion) and a number that keeps climbing.
+function streakMultiplier(streak) {
+  return 1 + Math.min(streak, 20) * 0.05; // +5%/day, caps at ×2.0 (20-day streak)
+}
+
+// Daily Bounty — a rotating, midnight-expiring quest. Novelty + FOMO + a fresh
+// reason to come back every single day. Deterministic per date so it's stable
+// across reloads but changes daily.
+const BOUNTY_POOL = [
+  { id: "early", label: "Early Riser", desc: "Wake up at 8:00 AM", reward: 50, test: (d) => d.wakeStage === "w8" },
+  { id: "road2", label: "Road Work", desc: "Run at least 2km", reward: 50, test: (d) => (d.runKm || 0) >= 2 },
+  { id: "road5", label: "Distance Demon", desc: "Run at least 5km", reward: 80, test: (d) => (d.runKm || 0) >= 5 },
+  { id: "hustle", label: "Hustler", desc: "Send 8+ job applications", reward: 60, test: (d) => (d.jobsCount || 0) >= 8 },
+  { id: "ship", label: "Ship It", desc: "Complete a video", reward: 70, test: (d) => d.videoStage === "v2" },
+  { id: "fullclear", label: "Full Clear", desc: "Hit a perfect day", reward: 60, test: (d) => d.perfectDay },
+  { id: "selfcare", label: "Self Care", desc: "Interview + bath in one day", reward: 55, test: (d) => d.bonusFlags?.interview && d.bonusFlags?.bath },
+  { id: "scholar", label: "Scholar", desc: "Journal + wake before 9", reward: 45, test: (d) => d.journal && (d.wakeStage === "w8" || d.wakeStage === "w9") },
+];
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function bountyForDate(dateKey) {
+  return BOUNTY_POOL[hashStr(dateKey) % BOUNTY_POOL.length];
+}
+
 const TASK_DEFS = [
   {
     key: "wake",
@@ -1890,6 +1920,7 @@ export default function GrindOps() {
   const [unlockedAch, setUnlockedAch] = useState([]);
   const [shields, setShields] = useState(0);
   const [shieldedDays, setShieldedDays] = useState([]);
+  const [claimedBounties, setClaimedBounties] = useState([]);
   const [seenOnboarding, setSeenOnboarding] = useState(false);
   const [stats, setStats] = useState({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0 });
   const [checkInModal, setCheckInModal] = useState(null);
@@ -1930,6 +1961,7 @@ export default function GrindOps() {
         setUnlockedAch(parsed.unlockedAch || []);
         setShields(parsed.shields || 0);
         setShieldedDays(parsed.shieldedDays || []);
+        setClaimedBounties(parsed.claimedBounties || []);
         setSeenOnboarding(!!parsed.seenOnboarding);
         setStats({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0, ...(parsed.stats || {}) });
         setPendingBoxes(parsed.pendingBoxes || 0);
@@ -1959,6 +1991,7 @@ export default function GrindOps() {
           unlockedAch,
           shields,
           shieldedDays,
+          claimedBounties,
           seenOnboarding,
           stats,
           pendingBoxes,
@@ -1967,7 +2000,7 @@ export default function GrindOps() {
     } catch (e) {
       /* storage unavailable or full, fail silently */
     }
-  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, seenOnboarding, stats, pendingBoxes]);
+  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, claimedBounties, seenOnboarding, stats, pendingBoxes]);
 
   const fireToast = (msg) => {
     setToast(msg);
@@ -1991,6 +2024,7 @@ export default function GrindOps() {
   const lvl = levelInfo(total);
   const currentStreak = computeCurrentStreak(days, shieldedSet);
   const longestStreak = computeLongestStreak(days, shieldedSet);
+  const mult = streakMultiplier(currentStreak);
 
   const applyDayUpdate = (updatedToday) => {
     const recalced = recalcDay(updatedToday, settings);
@@ -2007,18 +2041,24 @@ export default function GrindOps() {
     const gain = newTotal - prevTotal;
     if (gain > 0) {
       const phrases = ["DISCIPLINE UNLOCKED!", "UNSTOPPABLE!", "DOPAMINE BURST!", "KEEP GRINDING!", "FOCUS ACTIVE!", "PURE EFFORT!", "BEAST MODE!"];
-      // variable-ratio crit roll on every point gain
+      // streak multiplier — bigger streak, bigger every reward
+      const mult = streakMultiplier(currentStreak);
+      const multExtra = Math.round(gain * (mult - 1));
+      if (multExtra > 0) setBonusBank((b) => b + multExtra);
+      const base = gain + multExtra;
+      // variable-ratio crit roll on top of the (already multiplied) gain
       if (Math.random() < CRIT_CHANCE) {
         const c = rollWeighted(CRIT_TABLE);
-        const extra = gain * (c.mult - 1);
-        addBonus(extra, `${c.label}!`, `+${gain + extra} PTS`);
+        const critExtra = base * (c.mult - 1);
+        setBonusBank((b) => b + critExtra);
+        triggerFloat(`${c.label}!`, `+${base + critExtra} PTS`);
         sound.crit(c.mult);
         fireConfetti();
         fireFlash();
         setStats((s) => ({ ...s, maxCrit: Math.max(s.maxCrit, c.mult) }));
       } else {
-        const sub = phrases[Math.floor(Math.random() * phrases.length)];
-        triggerFloat(`+${gain} PTS`, sub);
+        const sub = mult > 1 ? `×${mult.toFixed(2)} STREAK BONUS` : phrases[Math.floor(Math.random() * phrases.length)];
+        triggerFloat(`+${base} PTS`, sub);
         fireConfetti();
       }
     }
@@ -2187,6 +2227,7 @@ export default function GrindOps() {
     setUnlockedAch([]);
     setShields(0);
     setShieldedDays([]);
+    setClaimedBounties([]);
     setSeenOnboarding(false);
     setStats({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0 });
     setPendingBoxes(0);
@@ -2333,6 +2374,23 @@ export default function GrindOps() {
     sound.success();
   };
 
+  // daily bounty (always keyed to the real today, not the calendar selection)
+  const realTodayKey = fmtDateKey(new Date());
+  const realToday = days[realTodayKey] || blankDay();
+  const todayBounty = bountyForDate(realTodayKey);
+  const bountyDone = todayBounty.test(realToday);
+  const bountyClaimed = claimedBounties.includes(realTodayKey);
+
+  const claimBounty = () => {
+    if (!bountyDone || bountyClaimed) return;
+    setClaimedBounties((arr) => [...arr, realTodayKey]);
+    addBonus(todayBounty.reward, `+${todayBounty.reward} PTS`, "BOUNTY CLEARED");
+    sound.fanfare();
+    fireConfetti();
+    fireFlash();
+    fireToast(`⚡ Bounty cleared: ${todayBounty.label}`);
+  };
+
   // time remaining until local midnight (for the streak countdown)
   const midnight = new Date(now);
   midnight.setHours(24, 0, 0, 0);
@@ -2342,6 +2400,33 @@ export default function GrindOps() {
   const todayPerfect = (days[fmtDateKey(new Date())] || {}).perfectDay;
   const streakAtRisk = currentStreak > 0 && !todayPerfect;
   const urgentRisk = streakAtRisk && hoursLeft < 3;
+
+  // tab-title re-engagement: pull the user back when they switch away
+  useEffect(() => {
+    const base = "GrindOps — your personal console";
+    const onVis = () => {
+      if (document.hidden) {
+        const lures = [
+          "👀 Come back to the grind…",
+          "🎁 Your daily reward is waiting",
+          "📦 A Mystery Box might be waiting",
+          "⚡ Today's bounty is still open",
+        ];
+        if (streakAtRisk) {
+          document.title = urgentRisk
+            ? `🚨 ${currentStreak}-day streak about to DIE`
+            : `🔥 Don't lose your ${currentStreak}-day streak!`;
+        } else {
+          document.title = lures[Math.floor(Math.random() * lures.length)];
+        }
+      } else {
+        document.title = base;
+      }
+    };
+    document.title = base;
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [streakAtRisk, urgentRisk, currentStreak]);
 
   if (loading) {
     return (
@@ -2542,6 +2627,15 @@ export default function GrindOps() {
                   <Shield className="h-3.5 w-3.5" />
                   <span className="font-mono text-sm">{shields}</span>
                 </div>
+                {mult > 1 && (
+                  <div
+                    title={`Streak multiplier — every point you earn is boosted ×${mult.toFixed(2)} while your streak is alive`}
+                    className="flex items-center gap-1 rounded-full border border-violet-400/50 bg-violet-400/10 px-2.5 py-1.5 text-violet-300"
+                  >
+                    <Zap className="h-3.5 w-3.5" />
+                    <span className="font-mono text-sm">×{mult.toFixed(2)}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -2567,6 +2661,49 @@ export default function GrindOps() {
                 </div>
               </div>
             )}
+
+            {/* DAILY BOUNTY */}
+            <div
+              className={`mb-5 overflow-hidden rounded-2xl border p-4 transition-all ${
+                bountyClaimed
+                  ? "border-neutral-800 bg-neutral-900/30"
+                  : bountyDone
+                  ? "border-amber-400/60 bg-amber-400/5 shadow-[0_0_24px_rgba(251,191,36,0.15)]"
+                  : "border-violet-500/40 bg-violet-500/5"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className={`h-4 w-4 ${bountyClaimed ? "text-neutral-500" : bountyDone ? "text-amber-400" : "text-violet-300"}`} />
+                  <span className="font-display text-sm font-semibold text-neutral-200">Today's Bounty</span>
+                </div>
+                <span className="font-mono text-[9px] uppercase tracking-wider text-neutral-500">
+                  expires in {hoursLeft}h {minsLeft}m
+                </span>
+              </div>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate font-display text-base font-bold text-neutral-50">{todayBounty.label}</div>
+                  <div className="truncate font-mono text-[11px] text-neutral-400">{todayBounty.desc}</div>
+                </div>
+                {bountyClaimed ? (
+                  <span className="flex shrink-0 items-center gap-1 rounded-full border border-neutral-700 bg-neutral-900 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-neutral-400">
+                    <Check className="h-3.5 w-3.5 text-teal-400" /> Claimed
+                  </span>
+                ) : bountyDone ? (
+                  <button
+                    onClick={claimBounty}
+                    className="shrink-0 animate-pulse rounded-full bg-gradient-to-r from-amber-400 to-rose-500 px-4 py-2 font-mono text-[11px] font-extrabold uppercase tracking-wider text-neutral-950 shadow-[0_0_20px_rgba(251,191,36,0.4)] transition-transform hover:scale-105 active:scale-95"
+                  >
+                    Claim +{todayBounty.reward}
+                  </button>
+                ) : (
+                  <span className="flex shrink-0 items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-3 py-1.5 font-mono text-[11px] font-bold text-violet-300">
+                    <Coins className="h-3.5 w-3.5" /> +{todayBounty.reward}
+                  </span>
+                )}
+              </div>
+            </div>
 
             {/* LEVEL PROGRESS */}
             <div className="mb-6">
@@ -2606,6 +2743,14 @@ export default function GrindOps() {
                   {TASK_DEFS.map((def) => today[def.key]).filter(Boolean).length}/{TASK_DEFS.length}
                 </span>
               </div>
+              {TASK_DEFS.filter((def) => today[def.key]).length === TASK_DEFS.length - 1 && (
+                <div className="mb-2.5 flex items-center gap-2 rounded-xl border border-amber-400/50 bg-amber-400/10 px-3 py-2.5 shadow-[0_0_20px_rgba(251,191,36,0.12)] animate-pulse">
+                  <Zap className="h-4 w-4 shrink-0 text-amber-400" />
+                  <span className="font-display text-sm font-bold text-amber-300">
+                    ⚡ ONE task away from a Perfect Day{currentStreak > 0 ? ` + your ${currentStreak}-day streak` : ""} — finish it!
+                  </span>
+                </div>
+              )}
               <div className="space-y-2.5">
                 {TASK_DEFS.map((def) => (
                   <TaskRow
