@@ -29,6 +29,19 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Gift,
+  Zap,
+  Package,
+  Shield,
+  Award,
+  Clock,
+  Star,
+  Crown,
+  Target,
+  Rocket,
+  Gem,
+  Skull,
+  Medal,
 } from "lucide-react";
 import * as Tone from "tone";
 
@@ -88,6 +101,80 @@ function computeStreakBonuses(days) {
   }
   return totalBonus;
 }
+
+/* ---------------------------------------------------------------
+   ADDICTION LAYER — daily check-in, loot, achievements
+--------------------------------------------------------------- */
+
+// Daily login chain. 7-day cycle; escalating base reward + jitter.
+// Day 7 also drops a mystery box + a streak shield (peak-reward anchor).
+const CHECKIN_REWARDS = [
+  { day: 1, base: 10, jitter: 5, label: "Day 1" },
+  { day: 2, base: 15, jitter: 5, label: "Day 2" },
+  { day: 3, base: 20, jitter: 8, label: "Day 3" },
+  { day: 4, base: 30, jitter: 10, label: "Day 4" },
+  { day: 5, base: 40, jitter: 12, label: "Day 5" },
+  { day: 6, base: 60, jitter: 15, label: "Day 6" },
+  { day: 7, base: 100, jitter: 25, label: "Day 7 · JACKPOT", box: true, shield: true },
+];
+
+// index into the 7-day cycle for a given chain length (loops after 7)
+function checkinSlot(chain) {
+  const n = Math.max(1, chain);
+  return ((n - 1) % 7);
+}
+
+// Variable-ratio crit on point gains. Weighted rarities — the slot machine.
+const CRIT_TABLE = [
+  { mult: 2, weight: 70, label: "2× CRIT", tone: "amber" },
+  { mult: 3, weight: 24, label: "3× MEGA CRIT", tone: "violet" },
+  { mult: 5, weight: 6, label: "5× LEGENDARY CRIT", tone: "rose" },
+];
+const CRIT_CHANCE = 0.2; // ~1 in 5 point gains rolls a crit
+
+// Mystery box loot. Weighted; unpredictable contents = curiosity hook.
+const LOOT_TABLE = [
+  { id: "pts_s", weight: 34, kind: "points", min: 15, max: 35, label: "Stash of points", icon: "Coins", tone: "teal" },
+  { id: "pts_m", weight: 24, kind: "points", min: 40, max: 80, label: "Big point haul", icon: "Coins", tone: "amber" },
+  { id: "shield", weight: 18, kind: "shield", amount: 1, label: "Streak Shield", icon: "Shield", tone: "sky" },
+  { id: "box", weight: 12, kind: "box", amount: 1, label: "Another Mystery Box!", icon: "Package", tone: "violet" },
+  { id: "pts_l", weight: 9, kind: "points", min: 100, max: 180, label: "Epic point vault", icon: "Gem", tone: "violet" },
+  { id: "jackpot", weight: 3, kind: "points", min: 250, max: 400, label: "💰 JACKPOT 💰", icon: "Crown", tone: "rose" },
+];
+
+function rollWeighted(table) {
+  const total = table.reduce((s, x) => s + x.weight, 0);
+  let r = Math.random() * total;
+  for (const x of table) {
+    r -= x.weight;
+    if (r <= 0) return x;
+  }
+  return table[table.length - 1];
+}
+
+function randInt(min, max) {
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+// Achievements. `test(stats) => bool`. Hidden ones render as ??? until earned.
+const ACHIEVEMENTS = [
+  { id: "first_blood", label: "First Blood", desc: "Complete your first perfect day", icon: Flame, reward: 25, test: (s) => s.perfectDays >= 1 },
+  { id: "streak_3", label: "Heating Up", desc: "Reach a 3-day streak", icon: Flame, reward: 30, test: (s) => s.longestStreak >= 3 },
+  { id: "streak_7", label: "Week Warrior", desc: "Reach a 7-day streak", icon: Flame, reward: 75, test: (s) => s.longestStreak >= 7 },
+  { id: "streak_30", label: "Iron Will", desc: "Reach a 30-day streak", icon: Crown, reward: 300, test: (s) => s.longestStreak >= 30 },
+  { id: "level_5", label: "Rainmaker", desc: "Reach Level 5", icon: Star, reward: 100, test: (s) => s.level >= 5 },
+  { id: "level_8", label: "Legend", desc: "Reach max level", icon: Crown, reward: 500, hidden: true, test: (s) => s.level >= 8 },
+  { id: "pts_1k", label: "Four Figures", desc: "Earn 1,000 lifetime points", icon: Coins, reward: 100, test: (s) => s.total >= 1000 },
+  { id: "pts_5k", label: "Whale", desc: "Earn 5,000 lifetime points", icon: Gem, reward: 400, hidden: true, test: (s) => s.total >= 5000 },
+  { id: "runner", label: "Long Hauler", desc: "Log 10km in a single day", icon: Footprints, reward: 60, test: (s) => s.maxRunKm >= 10 },
+  { id: "grinder", label: "Application Machine", desc: "Send 10 job apps in a day", icon: Briefcase, reward: 60, test: (s) => s.maxJobs >= 10 },
+  { id: "checkin_7", label: "Creature of Habit", desc: "Hit a 7-day check-in chain", icon: Gift, reward: 80, test: (s) => s.maxCheckin >= 7 },
+  { id: "first_reward", label: "Treat Yourself", desc: "Claim your first checkpoint", icon: Trophy, reward: 25, test: (s) => s.claimedRewards >= 1 },
+  { id: "first_buy", label: "Big Spender", desc: "Redeem from the dispensary", icon: ShoppingBag, reward: 25, test: (s) => s.purchases >= 1 },
+  { id: "box_open", label: "Curiosity", desc: "Open a mystery box", icon: Package, reward: 30, test: (s) => s.boxesOpened >= 1 },
+  { id: "crit_5", label: "Against All Odds", desc: "Land a 5× legendary crit", icon: Zap, reward: 100, hidden: true, test: (s) => s.maxCrit >= 5 },
+  { id: "shielded", label: "Saved By The Bell", desc: "Survive on a streak shield", icon: Shield, reward: 50, hidden: true, test: (s) => s.shieldsUsed >= 1 },
+];
 
 const TASK_DEFS = [
   {
@@ -346,17 +433,21 @@ function computeTotal(days) {
   return Object.values(days).reduce((s, d) => s + (d.pointsEarned || 0), 0);
 }
 
-function computeCurrentStreak(days) {
+// a date counts toward a streak if it was a perfect day OR was covered by a shield
+function dayCounts(days, key, shieldedSet) {
+  return (days[key] && days[key].perfectDay) || shieldedSet.has(key);
+}
+
+function computeCurrentStreak(days, shieldedSet = new Set()) {
   let streak = 0;
   let d = new Date();
-  // if today isn't perfect yet, streak reflects the run ending yesterday
-  if (!(days[fmtDateKey(d)] && days[fmtDateKey(d)].perfectDay)) {
+  // if today isn't counted yet, streak reflects the run ending yesterday
+  if (!dayCounts(days, fmtDateKey(d), shieldedSet)) {
     d.setDate(d.getDate() - 1);
   }
   while (true) {
     const key = fmtDateKey(d);
-    const rec = days[key];
-    if (rec && rec.perfectDay) {
+    if (dayCounts(days, key, shieldedSet)) {
       streak++;
       d.setDate(d.getDate() - 1);
     } else break;
@@ -364,9 +455,9 @@ function computeCurrentStreak(days) {
   return streak;
 }
 
-function computeLongestStreak(days) {
+function computeLongestStreak(days, shieldedSet = new Set()) {
   const dates = Object.keys(days)
-    .filter((k) => days[k].perfectDay)
+    .filter((k) => days[k].perfectDay || shieldedSet.has(k))
     .sort();
   let longest = 0,
     current = 0,
@@ -473,7 +564,19 @@ function useSound(enabled) {
     blip("C6", "4n", 0.48);
   }, [blip]);
 
-  return { tick, success, fanfare, undo, purchase, fail, levelup };
+  // crit: rising arpeggio whose length scales with multiplier (more salient = rarer)
+  const crit = useCallback(
+    (mult = 2) => {
+      const notes = ["E5", "G5", "B5", "D6", "G6", "B6"];
+      const steps = Math.min(notes.length, 2 + mult);
+      for (let i = 0; i < steps; i++) {
+        blip(notes[i], i === steps - 1 ? "8n" : "32n", i * 0.05);
+      }
+    },
+    [blip]
+  );
+
+  return { tick, success, fanfare, undo, purchase, fail, levelup, crit };
 }
 
 /* ---------------------------------------------------------------
@@ -594,6 +697,159 @@ function LevelUpFlash({ data, onClose }) {
         >
           CLAIM NEW RANK & CONTINUE
         </button>
+      </div>
+    </div>
+  );
+}
+
+const LOOT_ICONS = { Coins, Shield, Package, Gem, Crown };
+
+/* ---------------------------------------------------------------
+   DAILY CHECK-IN MODAL — escalating login chain
+--------------------------------------------------------------- */
+
+function DailyCheckInModal({ data, onClaim }) {
+  if (!data) return null;
+  const slot = checkinSlot(data.chain);
+  return (
+    <div className="fixed inset-0 z-[85] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+      <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-teal-500/40 bg-neutral-950 p-7 text-center shadow-[0_0_60px_rgba(45,212,191,0.25)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
+        <div className="absolute inset-0 -z-10 animate-spin bg-[radial-gradient(circle_at_center,rgba(45,212,191,0.15),transparent_65%)] opacity-80" style={{ animationDuration: "14s" }} />
+
+        <span className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-teal-400 bg-teal-400/10 text-teal-300 shadow-[0_0_30px_rgba(45,212,191,0.4)] animate-bounce">
+          <Gift className="h-8 w-8" />
+        </span>
+
+        {data.welcome ? (
+          <>
+            <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">welcome to the grind</div>
+            <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-neutral-100">You're on the board</h2>
+            <p className="mt-2 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-400">
+              Here's a head start so the streak's already yours to lose. Show up daily — the rewards compound.
+            </p>
+          </>
+        ) : data.broken ? (
+          <>
+            <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.3em] text-rose-400">
+              <Skull className="h-3.5 w-3.5" /> chain broken
+            </div>
+            <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-neutral-100">
+              You broke your {data.prevChain}-day chain
+            </h2>
+            <p className="mt-2 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-400">
+              All that momentum, gone. Back to Day 1. Don't let it happen again.
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-teal-400">daily check-in</div>
+            <h2 className="mt-2 text-2xl font-extrabold tracking-tight text-neutral-100">
+              Day {data.chain} streak
+            </h2>
+            <p className="mt-2 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-400">
+              You showed up again. Claim your reward — miss a day and you start over.
+            </p>
+          </>
+        )}
+
+        {/* 7-day reward track */}
+        <div className="mt-5 grid w-full grid-cols-7 gap-1.5">
+          {CHECKIN_REWARDS.map((r, i) => {
+            const isCurrent = i === slot;
+            const isPast = i < slot;
+            return (
+              <div
+                key={r.day}
+                className={`flex flex-col items-center gap-1 rounded-lg border py-2 transition-all ${
+                  isCurrent
+                    ? "border-amber-400 bg-amber-400/10 shadow-[0_0_15px_rgba(251,191,36,0.3)] scale-110"
+                    : isPast
+                    ? "border-teal-500/30 bg-teal-500/5"
+                    : "border-neutral-800 bg-neutral-900/40 opacity-50"
+                }`}
+              >
+                <span className={`font-mono text-[8px] ${isCurrent ? "text-amber-400" : "text-neutral-500"}`}>D{r.day}</span>
+                {r.box ? (
+                  <Package className={`h-3.5 w-3.5 ${isCurrent ? "text-amber-400" : "text-neutral-500"}`} />
+                ) : (
+                  <span className={`font-mono text-[8px] font-bold ${isCurrent ? "text-amber-400" : "text-neutral-500"}`}>+{r.base}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-5 flex items-center justify-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/5 px-4 py-1.5">
+          <Coins className="h-4 w-4 text-amber-400" />
+          <span className="font-mono text-sm font-bold text-amber-400">+{data.reward} pts</span>
+          {CHECKIN_REWARDS[slot].shield && (
+            <span className="ml-1 flex items-center gap-1 text-sky-300"><Shield className="h-3.5 w-3.5" /><span className="font-mono text-[10px]">+shield</span></span>
+          )}
+          {CHECKIN_REWARDS[slot].box && (
+            <span className="ml-1 flex items-center gap-1 text-violet-300"><Package className="h-3.5 w-3.5" /><span className="font-mono text-[10px]">+box</span></span>
+          )}
+        </div>
+
+        <button
+          onClick={onClaim}
+          className="mt-6 w-full rounded-2xl bg-gradient-to-r from-teal-400 to-amber-400 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(45,212,191,0.3)] transition-all hover:scale-105 active:scale-95"
+        >
+          {data.welcome ? "Claim head start" : "Claim reward"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   MYSTERY BOX MODAL — tap-to-open variable loot
+--------------------------------------------------------------- */
+
+function MysteryBoxModal({ open, result, onOpen, onClose }) {
+  if (!open) return null;
+  const tone = result ? COLOR_MAP[result.tone] || COLOR_MAP.amber : COLOR_MAP.violet;
+  const RIcon = result ? LOOT_ICONS[result.icon] || Gift : Package;
+  return (
+    <div className="fixed inset-0 z-[85] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+      <div className={`relative flex w-full max-w-sm flex-col items-center rounded-3xl border ${tone.border} bg-neutral-950 p-8 text-center ${tone.shadow} animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]`}>
+        <div className={`absolute inset-0 -z-10 animate-spin ${tone.bgSoft} rounded-3xl opacity-60`} style={{ animationDuration: "10s" }} />
+
+        {!result ? (
+          <>
+            <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-violet-400">mystery box</div>
+            <span className="my-5 flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-violet-400 bg-violet-400/10 text-violet-300 shadow-[0_0_40px_rgba(167,139,250,0.5)] animate-bounce">
+              <Package className="h-12 w-12" />
+            </span>
+            <p className="mb-5 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-400">
+              Something's inside. Could be a little. Could be a jackpot. Only one way to find out.
+            </p>
+            <button
+              onClick={onOpen}
+              className="w-full rounded-2xl bg-gradient-to-r from-violet-500 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-50 shadow-[0_4px_20px_rgba(167,139,250,0.4)] transition-all hover:scale-105 active:scale-95"
+            >
+              Open it
+            </button>
+          </>
+        ) : (
+          <>
+            <div className={`font-mono text-[10px] uppercase tracking-[0.3em] ${tone.text}`}>you got</div>
+            <span className={`my-5 flex h-24 w-24 items-center justify-center rounded-2xl border-2 ${tone.borderSolid} ${tone.bgSoft} ${tone.text} ${tone.shadow} animate-bounce`}>
+              <RIcon className="h-12 w-12" />
+            </span>
+            <h2 className="text-2xl font-extrabold tracking-tight text-neutral-100">{result.label}</h2>
+            {result.amountText && (
+              <div className={`mt-3 flex items-center gap-1.5 rounded-full border ${tone.border} ${tone.bgSoft} px-4 py-1.5`}>
+                <span className={`font-mono text-sm font-bold ${tone.text}`}>{result.amountText}</span>
+              </div>
+            )}
+            <button
+              onClick={onClose}
+              className="mt-6 w-full rounded-2xl bg-neutral-100 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 transition-all hover:scale-105 active:scale-95"
+            >
+              Collect
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -1568,6 +1824,50 @@ function SettingsDrawer({ settings, onChange, soundOn, onSoundToggle, open, onCl
    MAIN APP
 --------------------------------------------------------------- */
 
+/* ---------------------------------------------------------------
+   ACHIEVEMENTS / BADGES PANEL
+--------------------------------------------------------------- */
+
+function AchievementsPanel({ unlocked }) {
+  const unlockedSet = new Set(unlocked);
+  const count = ACHIEVEMENTS.filter((a) => unlockedSet.has(a.id)).length;
+  const pct = Math.round((count / ACHIEVEMENTS.length) * 100);
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between font-mono text-[10px] text-neutral-500">
+        <span>{count} / {ACHIEVEMENTS.length} unlocked</span>
+        <span>{pct}%</span>
+      </div>
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+        <div className="h-full rounded-full bg-gradient-to-r from-amber-400 to-rose-400 transition-all duration-700" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+        {ACHIEVEMENTS.map((a) => {
+          const got = unlockedSet.has(a.id);
+          const Icon = got ? a.icon : a.hidden ? Lock : a.icon;
+          const showHidden = a.hidden && !got;
+          return (
+            <div
+              key={a.id}
+              title={got ? `${a.label} — ${a.desc}` : showHidden ? "Hidden achievement" : a.desc}
+              className={`group relative flex flex-col items-center gap-1 rounded-xl border p-2.5 text-center transition-all ${
+                got
+                  ? "border-amber-400/50 bg-amber-400/5 shadow-[0_0_15px_rgba(251,191,36,0.08)]"
+                  : "border-neutral-800/80 bg-neutral-950/30 opacity-60"
+              }`}
+            >
+              <Icon className={`h-5 w-5 ${got ? "text-amber-400" : "text-neutral-600"}`} />
+              <span className={`text-[9px] font-semibold leading-tight ${got ? "text-neutral-200" : "text-neutral-500"}`}>
+                {showHidden ? "???" : a.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function GrindOps() {
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState({});
@@ -1584,8 +1884,23 @@ export default function GrindOps() {
   const [toast, setToast] = useState(null);
   const [levelUp, setLevelUp] = useState(null);
   const [floats, setFloats] = useState([]);
+  // addiction-layer state
+  const [bonusBank, setBonusBank] = useState(0);
+  const [checkIn, setCheckIn] = useState({ lastDate: null, chain: 0 });
+  const [unlockedAch, setUnlockedAch] = useState([]);
+  const [shields, setShields] = useState(0);
+  const [shieldedDays, setShieldedDays] = useState([]);
+  const [seenOnboarding, setSeenOnboarding] = useState(false);
+  const [stats, setStats] = useState({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0 });
+  const [checkInModal, setCheckInModal] = useState(null);
+  const [boxState, setBoxState] = useState(null); // { result: null | lootResult }
+  const [pendingBoxes, setPendingBoxes] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const [screenFlash, setScreenFlash] = useState(0);
   const shownMilestoneRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const checkInDoneRef = useRef(false);
+  const shieldCheckedRef = useRef(false);
 
   const triggerFloat = (text, sub) => {
     const id = Date.now() + Math.random();
@@ -1609,6 +1924,15 @@ export default function GrindOps() {
         setSpentPoints(parsed.spentPoints || 0);
         setShopItems(parsed.shopItems || DEFAULT_SHOP_ITEMS);
         setPurchaseHistory(parsed.purchaseHistory || []);
+        // addiction-layer keys (default when absent — backward compatible)
+        setBonusBank(parsed.bonusBank || 0);
+        setCheckIn(parsed.checkIn || { lastDate: null, chain: 0 });
+        setUnlockedAch(parsed.unlockedAch || []);
+        setShields(parsed.shields || 0);
+        setShieldedDays(parsed.shieldedDays || []);
+        setSeenOnboarding(!!parsed.seenOnboarding);
+        setStats({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0, ...(parsed.stats || {}) });
+        setPendingBoxes(parsed.pendingBoxes || 0);
       }
     } catch (e) {
       // no saved data yet, or it was corrupted, so defaults already in state
@@ -1617,23 +1941,33 @@ export default function GrindOps() {
     }
   }, []);
 
-  const persist = useCallback((nextDays, nextSettings, nextRewards, nextSpent = spentPoints, nextItems = shopItems, nextHistory = purchaseHistory) => {
+  // single autosave: persist whenever any saved slice changes
+  useEffect(() => {
+    if (loading) return;
     try {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
-          days: nextDays,
-          settings: nextSettings,
-          rewards: nextRewards,
-          spentPoints: nextSpent,
-          shopItems: nextItems,
-          purchaseHistory: nextHistory
+          days,
+          settings,
+          rewards,
+          spentPoints,
+          shopItems,
+          purchaseHistory,
+          bonusBank,
+          checkIn,
+          unlockedAch,
+          shields,
+          shieldedDays,
+          seenOnboarding,
+          stats,
+          pendingBoxes,
         })
       );
     } catch (e) {
       /* storage unavailable or full, fail silently */
     }
-  }, [spentPoints, shopItems, purchaseHistory]);
+  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, seenOnboarding, stats, pendingBoxes]);
 
   const fireToast = (msg) => {
     setToast(msg);
@@ -1642,13 +1976,21 @@ export default function GrindOps() {
   };
 
   const fireConfetti = () => setConfettiTick((t) => t + 1);
+  const fireFlash = () => setScreenFlash((t) => t + 1);
 
+  // award non-task points (check-ins, crits, loot, achievements)
+  const addBonus = (amount, text, sub) => {
+    if (amount > 0) setBonusBank((b) => b + amount);
+    if (text) triggerFloat(text, sub);
+  };
+
+  const shieldedSet = new Set(shieldedDays);
   const todayKey = fmtDateKey(selectedDate);
   const today = days[todayKey] || blankDay();
-  const total = computeTotal(days) + computeStreakBonuses(days);
+  const total = computeTotal(days) + computeStreakBonuses(days) + bonusBank;
   const lvl = levelInfo(total);
-  const currentStreak = computeCurrentStreak(days);
-  const longestStreak = computeLongestStreak(days);
+  const currentStreak = computeCurrentStreak(days, shieldedSet);
+  const longestStreak = computeLongestStreak(days, shieldedSet);
 
   const applyDayUpdate = (updatedToday) => {
     const recalced = recalcDay(updatedToday, settings);
@@ -1661,16 +2003,29 @@ export default function GrindOps() {
     const newLevel = levelInfo(newTotal).level;
 
     setDays(newDays);
-    persist(newDays, settings, rewards);
 
-    if (newTotal > prevTotal) {
+    const gain = newTotal - prevTotal;
+    if (gain > 0) {
       const phrases = ["DISCIPLINE UNLOCKED!", "UNSTOPPABLE!", "DOPAMINE BURST!", "KEEP GRINDING!", "FOCUS ACTIVE!", "PURE EFFORT!", "BEAST MODE!"];
-      const sub = phrases[Math.floor(Math.random() * phrases.length)];
-      triggerFloat(`+${newTotal - prevTotal} PTS`, sub);
-      fireConfetti();
+      // variable-ratio crit roll on every point gain
+      if (Math.random() < CRIT_CHANCE) {
+        const c = rollWeighted(CRIT_TABLE);
+        const extra = gain * (c.mult - 1);
+        addBonus(extra, `${c.label}!`, `+${gain + extra} PTS`);
+        sound.crit(c.mult);
+        fireConfetti();
+        fireFlash();
+        setStats((s) => ({ ...s, maxCrit: Math.max(s.maxCrit, c.mult) }));
+      } else {
+        const sub = phrases[Math.floor(Math.random() * phrases.length)];
+        triggerFloat(`+${gain} PTS`, sub);
+        fireConfetti();
+      }
     }
 
-    if (!prevDay.perfectDay && recalced.perfectDay) {
+    const becamePerfect = !prevDay.perfectDay && recalced.perfectDay;
+
+    if (becamePerfect) {
       sound.fanfare();
       fireConfetti();
       fireToast("🔥 Perfect day, every box checked");
@@ -1684,13 +2039,19 @@ export default function GrindOps() {
       fireConfetti();
     }
 
-    // streak milestone check (only meaningful right after a perfect-day toggle)
-    if (!prevDay.perfectDay && recalced.perfectDay) {
-      const streakAfter = computeCurrentStreak(newDays);
+    // streak milestone check + chance of a mystery box drop (only on a fresh perfect day)
+    if (becamePerfect) {
+      const nextShielded = new Set(shieldedDays);
+      const streakAfter = computeCurrentStreak(newDays, nextShielded);
       const hit = STREAK_MILESTONES.find((m) => m === streakAfter);
       if (hit && shownMilestoneRef.current !== `${todayKey}-${hit}`) {
         shownMilestoneRef.current = `${todayKey}-${hit}`;
         setTimeout(() => fireToast(`🔥 ${hit}-day streak, don't break it now`), 900);
+      }
+      // ~35% chance a perfect day drops a mystery box
+      if (Math.random() < 0.35) {
+        setPendingBoxes((n) => n + 1);
+        setTimeout(() => fireToast("📦 A Mystery Box dropped! Tap it to open."), 1400);
       }
     }
   };
@@ -1734,20 +2095,17 @@ export default function GrindOps() {
 
   const updateSettings = (next) => {
     setSettings(next);
-    persist(days, next, rewards);
     fireToast("Settings saved");
   };
 
   const toggleSound = () => {
     const next = { ...settings, soundOn: !settings.soundOn };
     setSettings(next);
-    persist(days, next, rewards);
   };
 
   const claimReward = (id) => {
     const next = rewards.map((r) => (r.id === id ? { ...r, claimed: true } : r));
     setRewards(next);
-    persist(days, settings, next);
     sound.fanfare();
     fireConfetti();
     const r = rewards.find((r) => r.id === id);
@@ -1758,13 +2116,11 @@ export default function GrindOps() {
   const addReward = ({ text, points }) => {
     const next = [...rewards, { id: `r${Date.now()}`, text, points, claimed: false }];
     setRewards(next);
-    persist(days, settings, next);
   };
 
   const deleteReward = (id) => {
     const next = rewards.filter((r) => r.id !== id);
     setRewards(next);
-    persist(days, settings, next);
   };
 
   const buyShopItem = (item) => {
@@ -1790,8 +2146,7 @@ export default function GrindOps() {
 
     setSpentPoints(nextSpent);
     setPurchaseHistory(nextHistory);
-    persist(days, settings, rewards, nextSpent, shopItems, nextHistory);
-    
+
     sound.purchase();
     fireConfetti();
     triggerFloat("LOOT REDEEMED!", item.text);
@@ -1809,7 +2164,6 @@ export default function GrindOps() {
       }
     ];
     setShopItems(nextItems);
-    persist(days, settings, rewards, spentPoints, nextItems, purchaseHistory);
     sound.success();
     fireToast(`Added "${text}" to dispensary`);
   };
@@ -1817,34 +2171,177 @@ export default function GrindOps() {
   const deleteShopItem = (id) => {
     const nextItems = shopItems.filter((i) => i.id !== id);
     setShopItems(nextItems);
-    persist(days, settings, rewards, spentPoints, nextItems, purchaseHistory);
     sound.undo();
     fireToast("Removed item from dispensary");
   };
 
   const resetAllData = () => {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          days: {},
-          settings: DEFAULT_SETTINGS,
-          rewards: DEFAULT_REWARDS,
-          spentPoints: 0,
-          shopItems: DEFAULT_SHOP_ITEMS,
-          purchaseHistory: []
-        })
-      );
-    } catch (e) {}
     setDays({});
     setSettings(DEFAULT_SETTINGS);
     setRewards(DEFAULT_REWARDS);
     setSpentPoints(0);
     setShopItems(DEFAULT_SHOP_ITEMS);
     setPurchaseHistory([]);
+    setBonusBank(0);
+    setCheckIn({ lastDate: null, chain: 0 });
+    setUnlockedAch([]);
+    setShields(0);
+    setShieldedDays([]);
+    setSeenOnboarding(false);
+    setStats({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0 });
+    setPendingBoxes(0);
+    setCheckInModal(null);
+    setBoxState(null);
+    checkInDoneRef.current = false;
+    shownMilestoneRef.current = null;
+    // autosave effect will write the cleared state
     sound.fail();
     fireToast("Console reset successfully! Starting fresh.");
   };
+
+  /* ----- addiction-layer effects & handlers ----- */
+
+  // live clock for the streak countdown
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // streak shield auto-consume: bridge a single missed day if a shield is held
+  useEffect(() => {
+    if (loading || shieldCheckedRef.current) return;
+    shieldCheckedRef.current = true;
+    if (shields <= 0) return;
+    const mk = (off) => { const d = new Date(); d.setDate(d.getDate() - off); return fmtDateKey(d); };
+    const sSet = new Set(shieldedDays);
+    const counts = (k) => (days[k] && days[k].perfectDay) || sSet.has(k);
+    const todayK = mk(0), yK = mk(1), dbyK = mk(2);
+    if (!counts(todayK) && !counts(yK) && counts(dbyK)) {
+      const saved = computeCurrentStreak(days, new Set([...shieldedDays, yK]));
+      setShieldedDays((arr) => [...arr, yK]);
+      setShields((x) => Math.max(0, x - 1));
+      setStats((s) => ({ ...s, shieldsUsed: s.shieldsUsed + 1 }));
+      setTimeout(() => fireToast(`🛡️ Streak Shield used — your ${saved}-day streak survived!`), 700);
+      sound.fanfare();
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // daily check-in evaluation (once after load)
+  useEffect(() => {
+    if (loading || checkInDoneRef.current) return;
+    checkInDoneRef.current = true;
+    const todayK = fmtDateKey(new Date());
+    if (checkIn.lastDate === todayK) return; // already claimed today
+    let broken = false;
+    let newChain;
+    if (!checkIn.lastDate) {
+      newChain = 1;
+    } else {
+      const diff = Math.round(
+        (new Date(todayK + "T00:00:00") - new Date(checkIn.lastDate + "T00:00:00")) / 86400000
+      );
+      if (diff === 1) newChain = checkIn.chain + 1;
+      else { broken = checkIn.chain > 1; newChain = 1; }
+    }
+    const r = CHECKIN_REWARDS[checkinSlot(newChain)];
+    const reward = r.base + randInt(0, r.jitter);
+    const welcome = !seenOnboarding && !checkIn.lastDate;
+    setCheckInModal({
+      chain: newChain,
+      reward,
+      broken: broken && !welcome,
+      prevChain: checkIn.chain,
+      welcome,
+      grantBox: !!r.box,
+      grantShield: !!r.shield,
+    });
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // achievement unlock detector
+  useEffect(() => {
+    if (loading) return;
+    const dayVals = Object.values(days);
+    const statObj = {
+      total,
+      level: lvl.level,
+      currentStreak,
+      longestStreak,
+      perfectDays: dayVals.filter((d) => d.perfectDay).length,
+      maxRunKm: dayVals.reduce((m, d) => Math.max(m, d.runKm || 0), 0),
+      maxJobs: dayVals.reduce((m, d) => Math.max(m, d.jobsCount || 0), 0),
+      claimedRewards: rewards.filter((r) => r.claimed).length,
+      purchases: purchaseHistory.length,
+      maxCheckin: stats.maxCheckin,
+      boxesOpened: stats.boxesOpened,
+      maxCrit: stats.maxCrit,
+      shieldsUsed: stats.shieldsUsed,
+    };
+    const newly = ACHIEVEMENTS.filter((a) => !unlockedAch.includes(a.id) && a.test(statObj));
+    if (newly.length) {
+      setUnlockedAch((prev) => [...prev, ...newly.map((a) => a.id)]);
+      const reward = newly.reduce((s, a) => s + (a.reward || 0), 0);
+      if (reward > 0) setBonusBank((b) => b + reward);
+      newly.forEach((a, i) => setTimeout(() => fireToast(`🏅 Achievement: ${a.label} (+${a.reward})`), 500 + i * 1300));
+      sound.fanfare();
+      fireConfetti();
+    }
+  }, [loading, total, lvl.level, currentStreak, longestStreak, days, rewards, purchaseHistory, stats, unlockedAch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const claimCheckIn = () => {
+    const m = checkInModal;
+    if (!m) return;
+    addBonus(m.reward, `+${m.reward} PTS`, m.welcome ? "WELCOME BONUS" : `DAY ${m.chain} CHECK-IN`);
+    setCheckIn({ lastDate: fmtDateKey(new Date()), chain: m.chain });
+    setStats((s) => ({ ...s, maxCheckin: Math.max(s.maxCheckin, m.chain) }));
+    if (m.grantShield) setShields((x) => x + 1);
+    if (m.grantBox) setPendingBoxes((n) => n + 1);
+    if (m.welcome) setSeenOnboarding(true);
+    sound.fanfare();
+    fireConfetti();
+    setCheckInModal(null);
+  };
+
+  const tapMysteryBox = () => {
+    if (pendingBoxes <= 0) return;
+    setBoxState({ result: null });
+    sound.tick();
+  };
+
+  const openMysteryBox = () => {
+    const loot = rollWeighted(LOOT_TABLE);
+    const result = { ...loot };
+    if (loot.kind === "points") {
+      const amt = randInt(loot.min, loot.max);
+      result.amountText = `+${amt} pts`;
+      setBonusBank((b) => b + amt);
+    } else if (loot.kind === "shield") {
+      setShields((x) => x + loot.amount);
+      result.amountText = `+${loot.amount} streak shield`;
+    } else if (loot.kind === "box") {
+      setPendingBoxes((n) => n + loot.amount);
+      result.amountText = `+${loot.amount} mystery box`;
+    }
+    setPendingBoxes((n) => Math.max(0, n - 1)); // consume the opened box
+    setStats((s) => ({ ...s, boxesOpened: s.boxesOpened + 1 }));
+    sound.purchase();
+    fireConfetti();
+    setBoxState({ result });
+  };
+
+  const collectMysteryBox = () => {
+    setBoxState(null);
+    sound.success();
+  };
+
+  // time remaining until local midnight (for the streak countdown)
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  const msLeft = midnight - now;
+  const hoursLeft = Math.floor(msLeft / 3600000);
+  const minsLeft = Math.floor((msLeft % 3600000) / 60000);
+  const todayPerfect = (days[fmtDateKey(new Date())] || {}).perfectDay;
+  const streakAtRisk = currentStreak > 0 && !todayPerfect;
+  const urgentRisk = streakAtRisk && hoursLeft < 3;
 
   if (loading) {
     return (
@@ -1892,7 +2389,51 @@ export default function GrindOps() {
           15% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
           100% { transform: translate(-50%, -135%) scale(1); opacity: 0; }
         }
+        @keyframes screen-flash {
+          0% { opacity: 0; }
+          30% { opacity: 0.55; }
+          100% { opacity: 0; }
+        }
+        .screen-flash { animation: screen-flash 0.5s ease-out forwards; }
+        @keyframes crate-bob {
+          0%, 100% { transform: translateY(0) rotate(-3deg); }
+          50% { transform: translateY(-8px) rotate(3deg); }
+        }
+        .crate-bob { animation: crate-bob 1.4s ease-in-out infinite; }
       `}</style>
+
+      {/* CRIT SCREEN FLASH */}
+      {screenFlash > 0 && (
+        <div key={screenFlash} className="screen-flash pointer-events-none fixed inset-0 z-[55] bg-gradient-to-br from-amber-400/40 via-rose-500/30 to-violet-500/40" />
+      )}
+
+      {/* DAILY CHECK-IN */}
+      <DailyCheckInModal data={checkInModal} onClaim={claimCheckIn} />
+
+      {/* MYSTERY BOX */}
+      <MysteryBoxModal
+        open={!!boxState}
+        result={boxState?.result}
+        onOpen={openMysteryBox}
+        onClose={collectMysteryBox}
+      />
+
+      {/* FLOATING MYSTERY BOX CRATE (tap to open) */}
+      {pendingBoxes > 0 && !boxState && !checkInModal && (
+        <button
+          onClick={tapMysteryBox}
+          className="fixed bottom-24 right-4 z-[75] flex flex-col items-center gap-1 rounded-2xl border-2 border-violet-400 bg-neutral-950/90 p-3 shadow-[0_0_30px_rgba(167,139,250,0.5)] backdrop-blur transition-transform active:scale-90"
+        >
+          <span className="crate-bob text-violet-300"><Package className="h-8 w-8" /></span>
+          <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-violet-300">
+            Open{pendingBoxes > 1 ? ` ×${pendingBoxes}` : ""}
+          </span>
+          <span className="absolute -right-1 -top-1 flex h-3 w-3">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
+            <span className="relative inline-flex h-3 w-3 rounded-full bg-rose-500" />
+          </span>
+        </button>
+      )}
 
       <ConfettiBurst key={confettiTick} active={confettiTick > 0} />
       <Toast toast={toast} />
@@ -1984,14 +2525,48 @@ export default function GrindOps() {
                   <span>Liquid Spendable: <span className="font-semibold text-neutral-300">{total - spentPoints} pts</span></span>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-black/40 px-3 py-1.5">
-                <Flame className={`h-4 w-4 ${currentStreak > 0 ? "flame-flicker text-amber-400" : "text-neutral-600"}`} />
-                <span className="font-mono text-sm text-neutral-200">{currentStreak}d</span>
-                {longestStreak > currentStreak && (
-                  <span className="font-mono text-[10px] text-neutral-500">best {longestStreak}d</span>
-                )}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 rounded-full border border-neutral-800 bg-black/40 px-3 py-1.5">
+                  <Flame className={`h-4 w-4 ${currentStreak > 0 ? "flame-flicker text-amber-400" : "text-neutral-600"}`} />
+                  <span className="font-mono text-sm text-neutral-200">{currentStreak}d</span>
+                  {longestStreak > currentStreak && (
+                    <span className="font-mono text-[10px] text-neutral-500">best {longestStreak}d</span>
+                  )}
+                </div>
+                <div
+                  title={`${shields} streak shield${shields === 1 ? "" : "s"} — auto-saves your streak if you miss a day`}
+                  className={`flex items-center gap-1 rounded-full border px-2.5 py-1.5 ${
+                    shields > 0 ? "border-sky-400/50 bg-sky-400/10 text-sky-300" : "border-neutral-800 bg-black/40 text-neutral-600"
+                  }`}
+                >
+                  <Shield className="h-3.5 w-3.5" />
+                  <span className="font-mono text-sm">{shields}</span>
+                </div>
               </div>
             </div>
+
+            {/* STREAK AT-RISK COUNTDOWN */}
+            {streakAtRisk && (
+              <div
+                className={`mb-5 flex items-center gap-2.5 rounded-2xl border px-4 py-3 ${
+                  urgentRisk
+                    ? "animate-pulse border-rose-500/60 bg-rose-500/10 shadow-[0_0_24px_rgba(244,63,94,0.25)]"
+                    : "border-amber-500/40 bg-amber-500/5"
+                }`}
+              >
+                <Clock className={`h-5 w-5 shrink-0 ${urgentRisk ? "text-rose-400" : "text-amber-400"}`} />
+                <div className="min-w-0">
+                  <div className={`font-display text-sm font-bold ${urgentRisk ? "text-rose-300" : "text-amber-300"}`}>
+                    {urgentRisk
+                      ? `🚨 STREAK AT RISK — don't throw away ${currentStreak} days`
+                      : `${hoursLeft}h ${minsLeft}m left to keep your ${currentStreak}-day streak alive`}
+                  </div>
+                  <div className="font-mono text-[10px] text-neutral-400">
+                    Finish every task today before midnight{shields > 0 ? " · or a 🛡️ shield will save you" : ""}.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* LEVEL PROGRESS */}
             <div className="mb-6">
@@ -2116,6 +2691,14 @@ export default function GrindOps() {
                   );
                 })}
               </div>
+            </div>
+
+            {/* ACHIEVEMENTS / BADGES */}
+            <div className="mb-8 border-b border-neutral-900 pb-8">
+              <h2 className="mb-3 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+                <Medal className="h-4 w-4 text-amber-400" /> Badges
+              </h2>
+              <AchievementsPanel unlocked={unlockedAch} />
             </div>
 
             {/* CHECKPOINTS */}
