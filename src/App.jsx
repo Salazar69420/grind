@@ -735,6 +735,96 @@ function LevelUpFlash({ data, onClose }) {
 const LOOT_ICONS = { Coins, Shield, Package, Gem, Crown };
 
 /* ---------------------------------------------------------------
+   MASCOT — "GRT", the grind bot. Emotes to make the app feel alive.
+   (Duolingo's playbook: contagious character emotion drives retention.)
+--------------------------------------------------------------- */
+
+const MASCOT_COLORS = {
+  idle: "#2dd4bf",
+  happy: "#34d399",
+  cheer: "#fbbf24",
+  hyped: "#a78bfa",
+  worried: "#fb7185",
+  sleepy: "#64748b",
+};
+
+function Mascot({ mood = "idle", size = 64 }) {
+  const c = MASCOT_COLORS[mood] || MASCOT_COLORS.idle;
+  const anim = {
+    idle: "mascot-bob 3s ease-in-out infinite",
+    happy: "mascot-hop 0.6s ease-in-out",
+    cheer: "mascot-hop 0.62s ease-in-out infinite",
+    hyped: "mascot-buzz 0.45s linear infinite",
+    worried: "mascot-shake 0.55s ease-in-out infinite",
+    sleepy: "mascot-bob 4.5s ease-in-out infinite",
+  }[mood] || "mascot-bob 3s ease-in-out infinite";
+
+  const eye = (cx) => {
+    if (mood === "happy" || mood === "cheer")
+      return <path key={cx} d={`M${cx - 7} 53 Q${cx} 44 ${cx + 7} 53`} fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" />;
+    if (mood === "sleepy")
+      return <line key={cx} x1={cx - 6} y1="52" x2={cx + 6} y2="52" stroke={c} strokeWidth="3.5" strokeLinecap="round" />;
+    if (mood === "worried")
+      return (
+        <g key={cx}>
+          <circle cx={cx} cy="53" r="6" fill={c} />
+          <circle cx={cx + 2} cy="51" r="2" fill="#0a0c0f" />
+        </g>
+      );
+    if (mood === "hyped")
+      return (
+        <g key={cx}>
+          <circle cx={cx} cy="52" r="6.5" fill="#fff" />
+          <circle cx={cx} cy="52" r="3" fill={c} />
+        </g>
+      );
+    return <ellipse key={cx} className="mascot-eye" cx={cx} cy="52" rx="3.4" ry="5.2" fill={c} style={{ transformOrigin: `${cx}px 52px` }} />;
+  };
+
+  const mouth = () => {
+    if (mood === "cheer" || mood === "hyped") return <ellipse cx="50" cy="68" rx={mood === "hyped" ? 7 : 6} ry={mood === "hyped" ? 6 : 5} fill={c} />;
+    if (mood === "worried") return <path d="M42 70 Q50 64 58 70" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round" />;
+    if (mood === "sleepy") return <line x1="46" y1="68" x2="54" y2="68" stroke={c} strokeWidth="3" strokeLinecap="round" />;
+    if (mood === "happy") return <path d="M40 64 Q50 74 60 64" fill="none" stroke={c} strokeWidth="3.5" strokeLinecap="round" />;
+    return <path d="M43 65 Q50 71 57 65" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round" />;
+  };
+
+  return (
+    <div style={{ width: size, height: size, animation: anim }} className="shrink-0">
+      <svg viewBox="0 0 100 100" width={size} height={size} style={{ filter: `drop-shadow(0 0 9px ${c}88)` }}>
+        <line x1="50" y1="25" x2="50" y2="13" stroke={c} strokeWidth="2.5" strokeLinecap="round" />
+        <circle cx="50" cy="10" r="4" fill={c}>
+          <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" repeatCount="indefinite" />
+        </circle>
+        <rect x="20" y="25" width="60" height="56" rx="18" fill="#0b0f14" stroke={c} strokeWidth="2.5" />
+        <rect x="13" y="45" width="6" height="16" rx="3" fill={c} opacity="0.85" />
+        <rect x="81" y="45" width="6" height="16" rx="3" fill={c} opacity="0.85" />
+        {mood === "worried" && (
+          <>
+            <line x1="33" y1="43" x2="45" y2="47" stroke={c} strokeWidth="2.5" strokeLinecap="round" />
+            <line x1="67" y1="43" x2="55" y2="47" stroke={c} strokeWidth="2.5" strokeLinecap="round" />
+          </>
+        )}
+        {eye(40)}
+        {eye(60)}
+        {mouth()}
+        {mood === "sleepy" && <text x="69" y="35" fill={c} fontSize="13" fontFamily="monospace">z</text>}
+        {(mood === "cheer" || mood === "hyped") && (
+          <>
+            <circle cx="22" cy="30" r="2" fill={c}>
+              <animate attributeName="opacity" values="0;1;0" dur="1s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="80" cy="34" r="2.2" fill={c}>
+              <animate attributeName="opacity" values="0;1;0" dur="1.2s" begin="0.3s" repeatCount="indefinite" />
+            </circle>
+          </>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    DAILY CHECK-IN MODAL — escalating login chain
 --------------------------------------------------------------- */
 
@@ -746,9 +836,13 @@ function DailyCheckInModal({ data, onClaim }) {
       <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-teal-500/40 bg-neutral-950 p-7 text-center shadow-[0_0_60px_rgba(45,212,191,0.25)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
         <div className="absolute inset-0 -z-10 animate-spin bg-[radial-gradient(circle_at_center,rgba(45,212,191,0.15),transparent_65%)] opacity-80" style={{ animationDuration: "14s" }} />
 
-        <span className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-teal-400 bg-teal-400/10 text-teal-300 shadow-[0_0_30px_rgba(45,212,191,0.4)] animate-bounce">
-          <Gift className="h-8 w-8" />
-        </span>
+        {data.welcome ? (
+          <div className="mb-2"><Mascot mood="cheer" size={84} /></div>
+        ) : (
+          <span className="mb-3 flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-teal-400 bg-teal-400/10 text-teal-300 shadow-[0_0_30px_rgba(45,212,191,0.4)] animate-bounce">
+            <Gift className="h-8 w-8" />
+          </span>
+        )}
 
         {data.welcome ? (
           <>
@@ -1928,10 +2022,12 @@ export default function GrindOps() {
   const [pendingBoxes, setPendingBoxes] = useState(0);
   const [now, setNow] = useState(Date.now());
   const [screenFlash, setScreenFlash] = useState(0);
+  const [mascotPulse, setMascotPulse] = useState(null);
   const shownMilestoneRef = useRef(null);
   const toastTimerRef = useRef(null);
   const checkInDoneRef = useRef(false);
   const shieldCheckedRef = useRef(false);
+  const mascotTimerRef = useRef(null);
 
   const triggerFloat = (text, sub) => {
     const id = Date.now() + Math.random();
@@ -2017,6 +2113,13 @@ export default function GrindOps() {
     if (text) triggerFloat(text, sub);
   };
 
+  // make the mascot emote in response to an event (auto-reverts to ambient mood)
+  const reactMascot = (mood, line) => {
+    setMascotPulse({ mood, line });
+    if (mascotTimerRef.current) clearTimeout(mascotTimerRef.current);
+    mascotTimerRef.current = setTimeout(() => setMascotPulse(null), 3200);
+  };
+
   const shieldedSet = new Set(shieldedDays);
   const todayKey = fmtDateKey(selectedDate);
   const today = days[todayKey] || blankDay();
@@ -2055,11 +2158,13 @@ export default function GrindOps() {
         sound.crit(c.mult);
         fireConfetti();
         fireFlash();
+        reactMascot("hyped", ["CRIT!! Tell me you saw that 🤯", "BOOM! Lucky roll, lock it in!", "That's a crit, baby! 🎰"][Math.floor(Math.random() * 3)]);
         setStats((s) => ({ ...s, maxCrit: Math.max(s.maxCrit, c.mult) }));
       } else {
         const sub = mult > 1 ? `×${mult.toFixed(2)} STREAK BONUS` : phrases[Math.floor(Math.random() * phrases.length)];
         triggerFloat(`+${base} PTS`, sub);
         fireConfetti();
+        reactMascot("happy", ["Nice. Keep it rolling.", "That's the stuff. 💪", "Logged it. Onto the next.", "Yes! Momentum building."][Math.floor(Math.random() * 4)]);
       }
     }
 
@@ -2069,6 +2174,7 @@ export default function GrindOps() {
       sound.fanfare();
       fireConfetti();
       fireToast("🔥 Perfect day, every box checked");
+      reactMascot("cheer", "PERFECT DAY. Every single box. You're him. 🔥");
     } else {
       sound.tick();
     }
@@ -2077,6 +2183,7 @@ export default function GrindOps() {
       setLevelUp({ level: newLevel, title: levelInfo(newTotal).title });
       sound.levelup();
       fireConfetti();
+      reactMascot("cheer", `LEVEL ${newLevel}! We're climbing 🚀`);
     }
 
     // streak milestone check + chance of a mystery box drop (only on a fresh perfect day)
@@ -2190,6 +2297,7 @@ export default function GrindOps() {
     sound.purchase();
     fireConfetti();
     triggerFloat("LOOT REDEEMED!", item.text);
+    reactMascot("cheer", "Treat unlocked. You earned this one. 😎");
     setAcquiredItem(item);
   };
 
@@ -2339,6 +2447,7 @@ export default function GrindOps() {
     if (m.welcome) setSeenOnboarding(true);
     sound.fanfare();
     fireConfetti();
+    reactMascot("happy", m.welcome ? "Welcome aboard. Let's build something. 🙌" : "Good to see you back. Let's work.");
     setCheckInModal(null);
   };
 
@@ -2389,6 +2498,7 @@ export default function GrindOps() {
     fireConfetti();
     fireFlash();
     fireToast(`⚡ Bounty cleared: ${todayBounty.label}`);
+    reactMascot("cheer", "Bounty cleared. Too easy. ⚡");
   };
 
   // time remaining until local midnight (for the streak countdown)
@@ -2427,6 +2537,25 @@ export default function GrindOps() {
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [streakAtRisk, urgentRisk, currentStreak]);
+
+  // ambient mascot mood/line derived from current state (overridden by reactions)
+  const ambientMascot = (() => {
+    const tDone = TASK_DEFS.filter((d) => realToday[d.key]).length;
+    const perfectToday = realToday.perfectDay;
+    if (pendingBoxes > 0) return { mood: "hyped", line: "A Mystery Box dropped! Tap it before it's gone 👀" };
+    if (bountyDone && !bountyClaimed) return { mood: "cheer", line: `Bounty's done — grab your +${todayBounty.reward}! ⚡` };
+    if (urgentRisk) return { mood: "worried", line: `🚨 ${hoursLeft}h ${minsLeft}m left. Don't kill our ${currentStreak}-day streak!` };
+    if (streakAtRisk && tDone === 0) return { mood: "worried", line: `We've got a ${currentStreak}-day streak. Let's protect it today.` };
+    if (tDone === TASK_DEFS.length - 1 && !perfectToday) return { mood: "hyped", line: "ONE more task. I can feel it — finish strong!" };
+    if (perfectToday && currentStreak >= 3) return { mood: "cheer", line: `${currentStreak} perfect days straight. You're built different. 🔥` };
+    if (perfectToday) return { mood: "cheer", line: "Perfect day locked. That's how it's done. 🙌" };
+    if (tDone === 0) {
+      const lines = ["New day, clean slate. Let's stack some wins.", "Ready when you are. First one's the hardest.", "Show up today. Future you is watching.", "Let's get one on the board early."];
+      return { mood: "idle", line: lines[hashStr(realTodayKey) % lines.length] };
+    }
+    return { mood: "happy", line: `${tDone}/${TASK_DEFS.length} done. Keep the momentum rolling.` };
+  })();
+  const mascotView = mascotPulse || ambientMascot;
 
   if (loading) {
     return (
@@ -2485,6 +2614,13 @@ export default function GrindOps() {
           50% { transform: translateY(-8px) rotate(3deg); }
         }
         .crate-bob { animation: crate-bob 1.4s ease-in-out infinite; }
+        @keyframes mascot-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+        @keyframes mascot-hop { 0%, 100% { transform: translateY(0) scale(1); } 30% { transform: translateY(-11px) scale(1.06); } 60% { transform: translateY(0) scale(0.97); } }
+        @keyframes mascot-buzz { 0%, 100% { transform: translate(0,0) rotate(-2deg); } 25% { transform: translate(1px,-2px) rotate(2deg); } 75% { transform: translate(-1px,-1px) rotate(-1deg); } }
+        @keyframes mascot-shake { 0%, 100% { transform: translateX(0) rotate(0); } 25% { transform: translateX(-2px) rotate(-3deg); } 75% { transform: translateX(2px) rotate(3deg); } }
+        @keyframes mascot-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(0.12); } }
+        .mascot-eye { animation: mascot-blink 4.2s infinite; }
+        @keyframes bubble-in { 0% { opacity: 0; transform: translateY(5px) scale(0.96); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
       `}</style>
 
       {/* CRIT SCREEN FLASH */}
@@ -2601,6 +2737,22 @@ export default function GrindOps() {
         {/* TAB SWITCHER */}
         {activeTab === "console" ? (
           <>
+            {/* MASCOT COACH */}
+            <div className="mb-5 flex items-center gap-3 rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900/70 to-neutral-900/20 p-3.5">
+              <Mascot mood={mascotView.mood} size={62} />
+              <div
+                key={mascotView.line}
+                className="relative flex-1 animate-[bubble-in_0.3s_ease-out] rounded-2xl rounded-bl-sm border border-neutral-700 bg-neutral-950/80 px-3.5 py-2.5"
+              >
+                <span
+                  className="pointer-events-none absolute -left-1.5 bottom-2 h-3 w-3 rotate-45 border-b border-l border-neutral-700 bg-neutral-950/80"
+                  aria-hidden="true"
+                />
+                <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-neutral-500">GRT // grind coach</div>
+                <span className="font-display text-sm font-semibold leading-snug text-neutral-100">{mascotView.line}</span>
+              </div>
+            </div>
+
             {/* TICKER + STREAK */}
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
               <div className="flex flex-col gap-1">
