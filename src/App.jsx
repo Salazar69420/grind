@@ -42,6 +42,8 @@ import {
   Gem,
   Skull,
   Medal,
+  Ghost,
+  Swords,
 } from "lucide-react";
 import * as Tone from "tone";
 
@@ -204,6 +206,93 @@ function hashStr(s) {
 
 function bountyForDate(dateKey) {
   return BOUNTY_POOL[hashStr(dateKey) % BOUNTY_POOL.length];
+}
+
+/* ---------------------------------------------------------------
+   PROGRESSION ARCHITECTURE — evolution, diamonds, prestige, rivals
+--------------------------------------------------------------- */
+
+// GRT evolution — the one system to obsess over. Stages unlock by level.
+const GRT_STAGES = [
+  { id: 0, name: "Spark", minLevel: 1 },
+  { id: 1, name: "Drone", minLevel: 3 },
+  { id: 2, name: "Sentinel", minLevel: 6 },
+  { id: 3, name: "Titan", minLevel: 10 },
+  { id: 4, name: "Ascendant", minLevel: 15 },
+];
+function grtStageFor(level) {
+  let s = GRT_STAGES[0];
+  for (const st of GRT_STAGES) if (level >= st.minLevel) s = st;
+  return s;
+}
+
+// Traits emerge from behaviour — you never quite know what GRT is becoming.
+const GRT_TRAITS = [
+  { id: "disciplined", task: "wake", label: "Disciplined", icon: Sun, desc: "Always up early" },
+  { id: "relentless", task: "run", label: "Relentless", icon: Footprints, desc: "Never skips the run" },
+  { id: "hustler", task: "jobs", label: "Hustler", icon: Briefcase, desc: "Applies relentlessly" },
+  { id: "creator", task: "video", label: "Creator", icon: Video, desc: "Always shipping" },
+  { id: "reflective", task: "journal", label: "Reflective", icon: BookOpen, desc: "Knows themselves" },
+];
+// derive { counts, traits[], dominant } from days history
+function deriveGrtProfile(days, perfectDays) {
+  const counts = { wake: 0, run: 0, jobs: 0, video: 0, journal: 0 };
+  Object.values(days).forEach((d) => {
+    for (const k of Object.keys(counts)) if (d[k]) counts[k] += 1;
+  });
+  const traits = [];
+  // a trait unlocks once you've done that task on 5+ days
+  GRT_TRAITS.forEach((t) => { if (counts[t.task] >= 5) traits.push(t.id); });
+  // "Unstoppable" combo trait: balanced + heavy volume
+  if (perfectDays >= 10) traits.push("unstoppable");
+  let dominant = null, max = 4;
+  for (const t of GRT_TRAITS) if (counts[t.task] > max) { max = counts[t.task]; dominant = t.id; }
+  return { counts, traits, dominant };
+}
+const COMBO_TRAIT = { id: "unstoppable", label: "Unstoppable", icon: null, desc: "10+ perfect days" };
+
+// Diamond streak vault — streaks compound into tangible value you dread losing.
+const STREAK_DIAMONDS = [
+  { day: 3, name: "Chip", color: "teal" },
+  { day: 7, name: "Quartz", color: "sky" },
+  { day: 14, name: "Sapphire", color: "violet" },
+  { day: 30, name: "Emerald", color: "teal" },
+  { day: 60, name: "Ruby", color: "rose" },
+  { day: 100, name: "Diamond", color: "amber" },
+  { day: 180, name: "Black Diamond", color: "violet" },
+  { day: 365, name: "Eternal", color: "amber" },
+];
+
+// Prestige — claimable at rising level thresholds; permanent status, never "done".
+function prestigeThreshold(prestige) {
+  return 12 + prestige * 6; // L12, L18, L24, ...
+}
+function prestigeMultiplier(prestige) {
+  return 1 + prestige * 0.1; // +10% to all point gains per ascension
+}
+
+// Simulated rivals for the weekly Arena (game AI opponents, not real users).
+const RIVAL_POOL = [
+  { name: "Maya", avatar: "🦊" }, { name: "Dre", avatar: "🐺" }, { name: "Kenji", avatar: "🐉" },
+  { name: "Lena", avatar: "🦅" }, { name: "Tariq", avatar: "🦁" }, { name: "Sol", avatar: "🐍" },
+  { name: "Iris", avatar: "🦉" }, { name: "Cole", avatar: "🐻" }, { name: "Nova", avatar: "🐆" },
+  { name: "Zane", avatar: "🦈" }, { name: "Priya", avatar: "🦚" }, { name: "Rook", avatar: "🦏" },
+];
+// Build a calibrated weekly board: rivals sit just above/below the user (MMR-style)
+// so the user always lands mid-pack with someone to chase.
+function buildLeaderboard(userPoints, wk) {
+  const offsets = [1.45, 1.22, 1.08, 0.92, 0.78, 0.6, 0.42]; // multipliers vs the user
+  const floor = 40; // so the board isn't empty early in the week
+  const rivals = offsets.map((mult, i) => {
+    const seed = hashStr(wk + ":" + i);
+    const jitter = (seed % 25) - 12; // ±12 deterministic wobble
+    const score = Math.max(floor + (seed % 30), Math.round(userPoints * mult) + jitter);
+    const persona = RIVAL_POOL[seed % RIVAL_POOL.length];
+    return { id: `r${i}`, name: persona.name, avatar: persona.avatar, score, isUser: false };
+  });
+  const board = [...rivals, { id: "you", name: "You", avatar: "🔥", score: userPoints, isUser: true }];
+  board.sort((a, b) => b.score - a.score);
+  return board;
 }
 
 const TASK_DEFS = [
@@ -504,11 +593,38 @@ function computeLongestStreak(days, shieldedSet = new Set()) {
   return longest;
 }
 
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+
 function levelInfo(total) {
   const level = Math.floor(total / LEVEL_STEP) + 1;
   const into = total % LEVEL_STEP;
-  const title = LEVEL_TITLES[Math.min(level - 1, LEVEL_TITLES.length - 1)];
+  // no terminal state: beyond the named tiers, ascend forever (Ascendant I, II, ...)
+  let title;
+  if (level <= LEVEL_TITLES.length) {
+    title = LEVEL_TITLES[level - 1];
+  } else {
+    const step = level - LEVEL_TITLES.length;
+    title = `Ascendant ${ROMAN[step - 1] || step}`;
+  }
   return { level, into, pct: Math.min(100, (into / LEVEL_STEP) * 100), title, remaining: LEVEL_STEP - into };
+}
+
+// ISO-ish week key (Monday-anchored) + points earned in the week N weeks ago
+function weekKey(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  const day = (d.getDay() + 6) % 7; // Mon=0 .. Sun=6
+  d.setDate(d.getDate() - day);
+  return fmtDateKey(d);
+}
+
+function weekPointsFor(days, offsetWeeks = 0) {
+  const base = new Date();
+  base.setDate(base.getDate() - offsetWeeks * 7);
+  const wk = weekKey(base);
+  return Object.keys(days).reduce((sum, k) => {
+    return weekKey(new Date(k + "T00:00:00")) === wk ? sum + (days[k].pointsEarned || 0) : sum;
+  }, 0);
 }
 
 function last7Dates() {
@@ -748,7 +864,7 @@ const MASCOT_COLORS = {
   sleepy: "#64748b",
 };
 
-function Mascot({ mood = "idle", size = 64 }) {
+function Mascot({ mood = "idle", size = 64, stage = 0, prestige = 0 }) {
   const c = MASCOT_COLORS[mood] || MASCOT_COLORS.idle;
   const anim = {
     idle: "mascot-bob 3s ease-in-out infinite",
@@ -789,16 +905,45 @@ function Mascot({ mood = "idle", size = 64 }) {
     return <path d="M43 65 Q50 71 57 65" fill="none" stroke={c} strokeWidth="3" strokeLinecap="round" />;
   };
 
+  const glow = prestige > 0 ? 13 : 9 + stage * 1;
   return (
     <div style={{ width: size, height: size, animation: anim }} className="shrink-0">
-      <svg viewBox="0 0 100 100" width={size} height={size} style={{ filter: `drop-shadow(0 0 9px ${c}88)` }}>
+      <svg viewBox="0 0 100 100" width={size} height={size} style={{ filter: `drop-shadow(0 0 ${glow}px ${c}${prestige > 0 ? "cc" : "88"})` }}>
+        {/* prestige aura ring */}
+        {prestige > 0 && (
+          <circle cx="50" cy="53" r="44" fill="none" stroke={c} strokeWidth="1.5" strokeDasharray="3 6" opacity="0.55">
+            <animateTransform attributeName="transform" type="rotate" from="0 50 53" to="360 50 53" dur="9s" repeatCount="indefinite" />
+          </circle>
+        )}
+        {/* stage 3+ : wings */}
+        {stage >= 3 && (
+          <>
+            <path d="M20 55 Q4 48 8 68 Q16 62 22 64 Z" fill={c} opacity="0.6" />
+            <path d="M80 55 Q96 48 92 68 Q84 62 78 64 Z" fill={c} opacity="0.6" />
+          </>
+        )}
+        {/* stage 4 : crown */}
+        {stage >= 4 && (
+          <path d="M34 22 L40 14 L50 20 L60 14 L66 22 Z" fill={c} stroke={c} strokeWidth="1" strokeLinejoin="round" />
+        )}
+        {/* antenna (twin from stage 2) */}
         <line x1="50" y1="25" x2="50" y2="13" stroke={c} strokeWidth="2.5" strokeLinecap="round" />
         <circle cx="50" cy="10" r="4" fill={c}>
           <animate attributeName="opacity" values="1;0.35;1" dur="1.6s" repeatCount="indefinite" />
         </circle>
+        {stage >= 2 && (
+          <>
+            <line x1="38" y1="26" x2="34" y2="16" stroke={c} strokeWidth="2" strokeLinecap="round" />
+            <circle cx="33" cy="14" r="2.5" fill={c} />
+            <line x1="62" y1="26" x2="66" y2="16" stroke={c} strokeWidth="2" strokeLinecap="round" />
+            <circle cx="67" cy="14" r="2.5" fill={c} />
+          </>
+        )}
         <rect x="20" y="25" width="60" height="56" rx="18" fill="#0b0f14" stroke={c} strokeWidth="2.5" />
         <rect x="13" y="45" width="6" height="16" rx="3" fill={c} opacity="0.85" />
         <rect x="81" y="45" width="6" height="16" rx="3" fill={c} opacity="0.85" />
+        {/* chest core glows brighter with stage */}
+        {stage >= 1 && <circle cx="50" cy="76" r={1.5 + stage * 0.6} fill={c} opacity="0.9" />}
         {mood === "worried" && (
           <>
             <line x1="33" y1="43" x2="45" y2="47" stroke={c} strokeWidth="2.5" strokeLinecap="round" />
@@ -820,6 +965,33 @@ function Mascot({ mood = "idle", size = 64 }) {
           </>
         )}
       </svg>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
+   GRT EVOLUTION REVEAL
+--------------------------------------------------------------- */
+
+function EvolveModal({ data, onClose }) {
+  if (!data) return null;
+  return (
+    <div className="fixed inset-0 z-[86] flex flex-col items-center justify-center bg-black/95 p-4 backdrop-blur-md">
+      <div className="relative flex w-full max-w-sm flex-col items-center rounded-3xl border border-violet-500/50 bg-neutral-950 p-8 text-center shadow-[0_0_70px_rgba(167,139,250,0.35)] animate-[levelup-pop-in_0.5s_cubic-bezier(.34,1.56,.64,1)]">
+        <div className="absolute inset-0 -z-10 animate-spin bg-[radial-gradient(circle_at_center,rgba(167,139,250,0.2),transparent_65%)] opacity-80" style={{ animationDuration: "8s" }} />
+        <div className="font-mono text-[10px] uppercase tracking-[0.35em] text-violet-400 animate-pulse">grt is evolving…</div>
+        <div className="my-4"><Mascot mood="cheer" size={110} stage={data.stage} prestige={data.prestige} /></div>
+        <h2 className="text-2xl font-extrabold tracking-tight text-neutral-50">{data.name}</h2>
+        <p className="mt-2 max-w-xs font-mono text-[10px] leading-relaxed text-neutral-400">
+          Your companion grew with you. New form unlocked — keep grinding to see what it becomes next.
+        </p>
+        <button
+          onClick={onClose}
+          className="mt-6 w-full rounded-2xl bg-gradient-to-r from-violet-500 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-50 shadow-[0_4px_20px_rgba(167,139,250,0.4)] transition-all hover:scale-105 active:scale-95"
+        >
+          Incredible
+        </button>
+      </div>
     </div>
   );
 }
@@ -1679,6 +1851,158 @@ function getRelativeTime(isoString) {
 }
 
 /* ---------------------------------------------------------------
+   ARENA — invisible scoreboard, lifetime stats, GRT profile, prestige
+--------------------------------------------------------------- */
+
+function ArenaView({ board, userRank, nextGap, nextName, wins, losses, pastSelf, lifetime, grtStage, traits, prestige, level, canPrestige, prestigeAtLevel, onPrestige, bestDiamonds }) {
+  const allTraits = [...GRT_TRAITS, COMBO_TRAIT];
+  return (
+    <div className="space-y-7">
+      {/* WEEKLY ARENA / LEADERBOARD */}
+      <div>
+        <div className="mb-2.5 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+            <Trophy className="h-4 w-4 text-amber-400" /> Weekly Arena
+          </h2>
+          <span className="font-mono text-[10px] text-neutral-500">
+            season {wins}W · {losses}L
+          </span>
+        </div>
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-2.5">
+          {nextName && (
+            <div className="mb-2 px-2 py-1.5 font-mono text-[11px] text-amber-300">
+              You're <span className="font-bold">#{userRank}</span> · just <span className="font-bold">{nextGap}</span> pts behind {nextName} ↑
+            </div>
+          )}
+          {userRank === 1 && (
+            <div className="mb-2 px-2 py-1.5 font-mono text-[11px] text-amber-300">👑 You're #1. Don't let them catch you.</div>
+          )}
+          <div className="space-y-1">
+            {board.map((row, i) => (
+              <div
+                key={row.id}
+                className={`flex items-center gap-2.5 rounded-xl px-2.5 py-2 ${
+                  row.isUser ? "border border-amber-400/50 bg-amber-400/10 shadow-[0_0_15px_rgba(251,191,36,0.12)]" : "bg-neutral-950/30"
+                }`}
+              >
+                <span className={`w-5 text-center font-mono text-xs font-bold ${i === 0 ? "text-amber-400" : "text-neutral-500"}`}>{i + 1}</span>
+                <span className="text-lg">{row.avatar}</span>
+                <span className={`flex-1 truncate text-sm font-semibold ${row.isUser ? "text-amber-300" : "text-neutral-300"}`}>{row.name}</span>
+                <span className={`font-mono text-sm ${row.isUser ? "text-amber-400 font-bold" : "text-neutral-400"}`}>{row.score}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 px-2 font-mono text-[9px] text-neutral-600">Resets every Monday · rivals are AI training partners</p>
+        </div>
+      </div>
+
+      {/* PAST-SELF GHOST */}
+      <div className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${pastSelf.delta >= 0 ? "border-teal-500/40 bg-teal-500/5" : "border-rose-500/40 bg-rose-500/5"}`}>
+        <Ghost className={`h-6 w-6 shrink-0 ${pastSelf.delta >= 0 ? "text-teal-300" : "text-rose-300"}`} />
+        <div>
+          <div className="font-display text-sm font-bold text-neutral-100">
+            {pastSelf.delta >= 0
+              ? `You're ${pastSelf.delta} pts ahead of last-week you 🔥`
+              : `Last-week you is ${Math.abs(pastSelf.delta)} pts ahead 👻`}
+          </div>
+          <div className="font-mono text-[10px] text-neutral-500">this week {pastSelf.thisWeek} · last week {pastSelf.lastWeek}</div>
+        </div>
+      </div>
+
+      {/* GRT PROFILE */}
+      <div>
+        <h2 className="mb-2.5 font-display text-sm font-semibold text-neutral-300">Your companion · GRT</h2>
+        <div className="flex items-center gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4">
+          <Mascot mood="happy" size={68} stage={grtStage.id} prestige={prestige} />
+          <div className="flex-1">
+            <div className="font-display text-base font-bold text-neutral-50">
+              {grtStage.name}{prestige > 0 && <span className="ml-1 text-amber-400">★{prestige}</span>}
+            </div>
+            <div className="mb-2 font-mono text-[10px] text-neutral-500">evolution stage {grtStage.id + 1}/{GRT_STAGES.length}</div>
+            <div className="flex flex-wrap gap-1.5">
+              {allTraits.map((t) => {
+                const got = traits.includes(t.id);
+                return (
+                  <span
+                    key={t.id}
+                    title={got ? t.desc : "Trait not yet emerged"}
+                    className={`rounded-full border px-2 py-0.5 font-mono text-[9px] ${got ? "border-violet-400/50 bg-violet-400/10 text-violet-300" : "border-neutral-800 text-neutral-600"}`}
+                  >
+                    {got ? t.label : "???"}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* PRESTIGE */}
+      <div>
+        <h2 className="mb-2.5 flex items-center gap-2 font-display text-sm font-semibold text-neutral-300">
+          <Crown className="h-4 w-4 text-amber-400" /> Ascension
+        </h2>
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/40 p-4 text-center">
+          <div className="mb-1 font-mono text-[10px] uppercase tracking-wider text-neutral-500">prestige rank</div>
+          <div className="font-display text-3xl font-extrabold text-amber-400">★ {prestige}</div>
+          <div className="mt-1 font-mono text-[10px] text-neutral-500">+{Math.round((prestigeMultiplier(prestige) - 1) * 100)}% permanent point bonus</div>
+          {canPrestige ? (
+            <button
+              onClick={onPrestige}
+              className="mt-4 w-full animate-pulse rounded-2xl bg-gradient-to-r from-amber-400 to-rose-500 py-3 text-sm font-extrabold uppercase tracking-widest text-neutral-950 shadow-[0_4px_20px_rgba(251,191,36,0.4)] transition-all hover:scale-105 active:scale-95"
+            >
+              ⭐ Ascend to Prestige {prestige + 1}
+            </button>
+          ) : (
+            <div className="mt-4 font-mono text-[11px] text-neutral-500">Reach level {prestigeAtLevel} to ascend (you're {level})</div>
+          )}
+        </div>
+      </div>
+
+      {/* LIFETIME STATS — never cap out */}
+      <div>
+        <h2 className="mb-2.5 font-display text-sm font-semibold text-neutral-300">Lifetime</h2>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { label: "All-time points", value: lifetime.points },
+            { label: "Perfect days", value: lifetime.perfectDays },
+            { label: "Tasks completed", value: lifetime.tasks },
+            { label: "Total km run", value: lifetime.km },
+            { label: "Job apps sent", value: lifetime.apps },
+            { label: "Active days", value: lifetime.activeDays },
+            { label: "Best streak", value: `${lifetime.bestStreak}d` },
+            { label: "Boxes opened", value: lifetime.boxes },
+          ].map((s) => (
+            <div key={s.label} className="rounded-xl border border-neutral-800/80 bg-neutral-950/30 p-3">
+              <div className="font-mono text-lg font-bold text-neutral-100">{s.value}</div>
+              <div className="font-mono text-[9px] uppercase tracking-wider text-neutral-500">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* BEST-EVER DIAMONDS */}
+      {bestDiamonds.length > 0 && (
+        <div>
+          <h2 className="mb-2.5 font-display text-sm font-semibold text-neutral-300">Diamond Trophies</h2>
+          <div className="flex flex-wrap gap-2">
+            {bestDiamonds.map((d) => {
+              const dc = COLOR_MAP[d.color] || COLOR_MAP.amber;
+              return (
+                <div key={d.day} title={`${d.name} · ${d.day}-day streak`} className={`flex items-center gap-1.5 rounded-xl border ${dc.border} ${dc.bgSoft} px-2.5 py-1.5`}>
+                  <Gem className={`h-3.5 w-3.5 ${dc.text}`} />
+                  <span className={`font-mono text-[10px] ${dc.text}`}>{d.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------
    SETTINGS DRAWER
 --------------------------------------------------------------- */
 
@@ -2023,11 +2347,18 @@ export default function GrindOps() {
   const [now, setNow] = useState(Date.now());
   const [screenFlash, setScreenFlash] = useState(0);
   const [mascotPulse, setMascotPulse] = useState(null);
+  // progression-architecture state
+  const [prestige, setPrestige] = useState(0);
+  const [league, setLeague] = useState({ wins: 0, losses: 0, lastSettledWeek: null });
+  const [revealedTraits, setRevealedTraits] = useState([]);
+  const [grtStageSeen, setGrtStageSeen] = useState(0);
+  const [evolveModal, setEvolveModal] = useState(null);
   const shownMilestoneRef = useRef(null);
   const toastTimerRef = useRef(null);
   const checkInDoneRef = useRef(false);
   const shieldCheckedRef = useRef(false);
   const mascotTimerRef = useRef(null);
+  const leagueSettledRef = useRef(false);
 
   const triggerFloat = (text, sub) => {
     const id = Date.now() + Math.random();
@@ -2061,6 +2392,11 @@ export default function GrindOps() {
         setSeenOnboarding(!!parsed.seenOnboarding);
         setStats({ boxesOpened: 0, maxCrit: 0, shieldsUsed: 0, maxCheckin: 0, ...(parsed.stats || {}) });
         setPendingBoxes(parsed.pendingBoxes || 0);
+        // progression-architecture keys
+        setPrestige(parsed.prestige || 0);
+        setLeague(parsed.league || { wins: 0, losses: 0, lastSettledWeek: null });
+        setRevealedTraits(parsed.revealedTraits || []);
+        setGrtStageSeen(parsed.grtStageSeen || 0);
       }
     } catch (e) {
       // no saved data yet, or it was corrupted, so defaults already in state
@@ -2091,12 +2427,16 @@ export default function GrindOps() {
           seenOnboarding,
           stats,
           pendingBoxes,
+          prestige,
+          league,
+          revealedTraits,
+          grtStageSeen,
         })
       );
     } catch (e) {
       /* storage unavailable or full, fail silently */
     }
-  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, claimedBounties, seenOnboarding, stats, pendingBoxes]);
+  }, [loading, days, settings, rewards, spentPoints, shopItems, purchaseHistory, bonusBank, checkIn, unlockedAch, shields, shieldedDays, claimedBounties, seenOnboarding, stats, pendingBoxes, prestige, league, revealedTraits, grtStageSeen]);
 
   const fireToast = (msg) => {
     setToast(msg);
@@ -2129,6 +2469,35 @@ export default function GrindOps() {
   const longestStreak = computeLongestStreak(days, shieldedSet);
   const mult = streakMultiplier(currentStreak);
 
+  // ---- progression-architecture derived values ----
+  const perfectDaysCount = Object.values(days).filter((d) => d.perfectDay).length;
+  const grtProfile = deriveGrtProfile(days, perfectDaysCount);
+  const grtStage = grtStageFor(lvl.level);
+  const earnedDiamonds = STREAK_DIAMONDS.filter((d) => currentStreak >= d.day);
+  const bestDiamonds = STREAK_DIAMONDS.filter((d) => longestStreak >= d.day);
+  // weekly arena
+  const thisWeekPts = weekPointsFor(days, 0);
+  const lastWeekPts = weekPointsFor(days, 1);
+  const board = buildLeaderboard(thisWeekPts, weekKey(new Date()));
+  const userRank = board.findIndex((r) => r.isUser) + 1;
+  const aboveUser = board[userRank - 2]; // the rival directly above
+  const nextName = aboveUser ? aboveUser.name : null;
+  const nextGap = aboveUser ? aboveUser.score - thisWeekPts : 0;
+  // prestige eligibility
+  const prestigeAtLevel = prestigeThreshold(prestige);
+  const canPrestige = lvl.level >= prestigeAtLevel;
+  // lifetime never-capping stats
+  const lifetime = {
+    points: total,
+    perfectDays: perfectDaysCount,
+    tasks: Object.values(days).reduce((s, d) => s + TASK_DEFS.filter((t) => d[t.key]).length, 0),
+    km: Math.round(Object.values(days).reduce((s, d) => s + (d.runKm || 0), 0)),
+    apps: Object.values(days).reduce((s, d) => s + (d.jobsCount || 0), 0),
+    activeDays: Object.keys(days).length,
+    bestStreak: longestStreak,
+    boxes: stats.boxesOpened,
+  };
+
   const applyDayUpdate = (updatedToday) => {
     const recalced = recalcDay(updatedToday, settings);
     const prevDay = days[todayKey] || blankDay();
@@ -2144,8 +2513,8 @@ export default function GrindOps() {
     const gain = newTotal - prevTotal;
     if (gain > 0) {
       const phrases = ["DISCIPLINE UNLOCKED!", "UNSTOPPABLE!", "DOPAMINE BURST!", "KEEP GRINDING!", "FOCUS ACTIVE!", "PURE EFFORT!", "BEAST MODE!"];
-      // streak multiplier — bigger streak, bigger every reward
-      const mult = streakMultiplier(currentStreak);
+      // streak multiplier (× permanent prestige bonus) — bigger streak, bigger reward
+      const mult = streakMultiplier(currentStreak) * prestigeMultiplier(prestige);
       const multExtra = Math.round(gain * (mult - 1));
       if (multExtra > 0) setBonusBank((b) => b + multExtra);
       const base = gain + multExtra;
@@ -2341,8 +2710,14 @@ export default function GrindOps() {
     setPendingBoxes(0);
     setCheckInModal(null);
     setBoxState(null);
+    setPrestige(0);
+    setLeague({ wins: 0, losses: 0, lastSettledWeek: null });
+    setRevealedTraits([]);
+    setGrtStageSeen(0);
+    setEvolveModal(null);
     checkInDoneRef.current = false;
     shownMilestoneRef.current = null;
+    leagueSettledRef.current = false;
     // autosave effect will write the cleared state
     sound.fail();
     fireToast("Console reset successfully! Starting fresh.");
@@ -2435,6 +2810,59 @@ export default function GrindOps() {
       fireConfetti();
     }
   }, [loading, total, lvl.level, currentStreak, longestStreak, days, rewards, purchaseHistory, stats, unlockedAch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // GRT evolution detector — celebrate a new stage once
+  useEffect(() => {
+    if (loading) return;
+    if (grtStage.id > grtStageSeen) {
+      setGrtStageSeen(grtStage.id);
+      setEvolveModal({ stage: grtStage.id, name: grtStage.name, prestige });
+      sound.levelup();
+      fireConfetti();
+    }
+  }, [loading, grtStage.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // GRT trait reveal — a new personality trait emerges
+  useEffect(() => {
+    if (loading) return;
+    const newTraits = grtProfile.traits.filter((t) => !revealedTraits.includes(t));
+    if (newTraits.length) {
+      setRevealedTraits((prev) => [...prev, ...newTraits]);
+      const meta = [...GRT_TRAITS, COMBO_TRAIT].find((t) => t.id === newTraits[0]);
+      if (meta) {
+        setTimeout(() => fireToast(`✨ GRT developed a trait: ${meta.label}`), 700);
+        reactMascot("cheer", `I'm becoming ${meta.label}. Look what we're building. ✨`);
+      }
+    }
+  }, [loading, grtProfile.traits.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // weekly league settle — record last week's finish, start a fresh season
+  useEffect(() => {
+    if (loading || leagueSettledRef.current) return;
+    leagueSettledRef.current = true;
+    const wk = weekKey(new Date());
+    if (league.lastSettledWeek && league.lastSettledWeek !== wk) {
+      const prevBoard = buildLeaderboard(lastWeekPts, league.lastSettledWeek);
+      const prevRank = prevBoard.findIndex((r) => r.isUser) + 1;
+      const won = prevRank <= Math.ceil(prevBoard.length / 2);
+      setLeague((lg) => ({ wins: lg.wins + (won ? 1 : 0), losses: lg.losses + (won ? 0 : 1), lastSettledWeek: wk }));
+      setTimeout(() => fireToast(won ? `🏆 Last week you finished #${prevRank} — a win!` : `📉 Last week you finished #${prevRank}. New week, redeem it.`), 1200);
+    } else if (!league.lastSettledWeek) {
+      setLeague((lg) => ({ ...lg, lastSettledWeek: wk }));
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doPrestige = () => {
+    if (!canPrestige) return;
+    const next = prestige + 1;
+    setPrestige(next);
+    sound.levelup();
+    fireConfetti();
+    fireFlash();
+    setEvolveModal({ stage: grtStage.id, name: `Prestige ${next} · ${grtStage.name}`, prestige: next });
+    reactMascot("cheer", `ASCENDED. Prestige ${next}. We don't stop. ⭐`);
+    fireToast(`⭐ Ascended to Prestige ${next} — permanent +${next * 10}% bonus`);
+  };
 
   const claimCheckIn = () => {
     const m = checkInModal;
@@ -2631,6 +3059,9 @@ export default function GrindOps() {
       {/* DAILY CHECK-IN */}
       <DailyCheckInModal data={checkInModal} onClaim={claimCheckIn} />
 
+      {/* GRT EVOLUTION */}
+      <EvolveModal data={evolveModal} onClose={() => setEvolveModal(null)} />
+
       {/* MYSTERY BOX */}
       <MysteryBoxModal
         open={!!boxState}
@@ -2739,7 +3170,7 @@ export default function GrindOps() {
           <>
             {/* MASCOT COACH */}
             <div className="mb-5 flex items-center gap-3 rounded-2xl border border-neutral-800 bg-gradient-to-br from-neutral-900/70 to-neutral-900/20 p-3.5">
-              <Mascot mood={mascotView.mood} size={62} />
+              <Mascot mood={mascotView.mood} size={62} stage={grtStage.id} prestige={prestige} />
               <div
                 key={mascotView.line}
                 className="relative flex-1 animate-[bubble-in_0.3s_ease-out] rounded-2xl rounded-bl-sm border border-neutral-700 bg-neutral-950/80 px-3.5 py-2.5"
@@ -2748,7 +3179,7 @@ export default function GrindOps() {
                   className="pointer-events-none absolute -left-1.5 bottom-2 h-3 w-3 rotate-45 border-b border-l border-neutral-700 bg-neutral-950/80"
                   aria-hidden="true"
                 />
-                <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-neutral-500">GRT // grind coach</div>
+                <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-neutral-500">GRT · {grtStage.name}{prestige > 0 ? ` ★${prestige}` : ""}</div>
                 <span className="font-display text-sm font-semibold leading-snug text-neutral-100">{mascotView.line}</span>
               </div>
             </div>
@@ -2808,8 +3239,45 @@ export default function GrindOps() {
                       : `${hoursLeft}h ${minsLeft}m left to keep your ${currentStreak}-day streak alive`}
                   </div>
                   <div className="font-mono text-[10px] text-neutral-400">
-                    Finish every task today before midnight{shields > 0 ? " · or a 🛡️ shield will save you" : ""}.
+                    {earnedDiamonds.length > 0
+                      ? `Miss today and ${earnedDiamonds.length} streak diamond${earnedDiamonds.length === 1 ? "" : "s"} SHATTER`
+                      : "Finish every task today before midnight"}
+                    {shields > 0 ? " · or a 🛡️ shield saves you" : ""}.
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* DIAMOND STREAK VAULT */}
+            {earnedDiamonds.length > 0 && (
+              <div className="mb-5 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-3.5">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 font-display text-xs font-semibold text-neutral-300">
+                    <Gem className="h-3.5 w-3.5 text-violet-300" /> Streak Vault
+                  </span>
+                  <span className="font-mono text-[9px] uppercase tracking-wider text-neutral-500">
+                    {earnedDiamonds.length} earned · keep the streak
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {STREAK_DIAMONDS.map((d) => {
+                    const got = currentStreak >= d.day;
+                    const dc = COLOR_MAP[d.color] || COLOR_MAP.amber;
+                    return (
+                      <div
+                        key={d.day}
+                        title={`${d.name} · ${d.day}-day streak`}
+                        className={`flex flex-col items-center gap-0.5 rounded-xl border px-2.5 py-1.5 transition-all ${
+                          got
+                            ? `${dc.border} ${dc.bgSoft} ${urgentRisk ? "animate-pulse" : ""}`
+                            : "border-neutral-800/70 bg-neutral-950/30 opacity-40"
+                        }`}
+                      >
+                        <Gem className={`h-4 w-4 ${got ? dc.text : "text-neutral-600"}`} />
+                        <span className={`font-mono text-[8px] ${got ? dc.text : "text-neutral-600"}`}>{d.day}d</span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3006,6 +3474,25 @@ export default function GrindOps() {
               <Checkpoints rewards={rewards} total={total} onClaim={claimReward} onAdd={addReward} onDelete={deleteReward} />
             </div>
           </>
+        ) : activeTab === "arena" ? (
+          <ArenaView
+            board={board}
+            userRank={userRank}
+            nextGap={nextGap}
+            nextName={nextName}
+            wins={league.wins}
+            losses={league.losses}
+            pastSelf={{ thisWeek: thisWeekPts, lastWeek: lastWeekPts, delta: thisWeekPts - lastWeekPts }}
+            lifetime={lifetime}
+            grtStage={grtStage}
+            traits={revealedTraits}
+            prestige={prestige}
+            level={lvl.level}
+            canPrestige={canPrestige}
+            prestigeAtLevel={prestigeAtLevel}
+            onPrestige={doPrestige}
+            bestDiamonds={bestDiamonds}
+          />
         ) : (
           <DispensaryView
             balance={total - spentPoints}
@@ -3039,7 +3526,22 @@ export default function GrindOps() {
             <Compass className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             Console
           </button>
-          
+
+          <button
+            onClick={() => {
+              setActiveTab("arena");
+              sound.tick();
+            }}
+            className={`relative flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold tracking-wider uppercase transition-all duration-300 active:scale-95 sm:gap-2 sm:px-4 sm:text-xs ${
+              activeTab === "arena"
+                ? "bg-gradient-to-r from-violet-400 to-rose-500 text-neutral-950 shadow-[0_0_15px_rgba(167,139,250,0.4)]"
+                : "text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            <Swords className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            Arena
+          </button>
+
           {/* Persistent points divider */}
           <div className="flex flex-col items-center justify-center border-l border-r border-neutral-800 px-2 sm:px-4">
             <span className="font-mono text-xs font-black text-amber-400 sm:text-sm animate-[pulse_2s_infinite]">{total}</span>
